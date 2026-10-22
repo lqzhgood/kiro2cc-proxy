@@ -3,6 +3,7 @@
 import { useTranslation } from 'react-i18next'
 import { RefreshCw, CheckCircle2, Plus } from 'lucide-react'
 import { ACTION_BTN, ACTION_BTN_PRIMARY } from '@/components/dashboard/panel-constants'
+import { OneClickImport } from '@/features/one-click-import'
 
 interface CredentialActionBarProps {
   allCredentials: unknown[]
@@ -71,12 +72,14 @@ export function CredentialActionBar({
               <button
                 type="button"
                 onClick={openBatchImport}
+                style={{ display: 'none' }}
                 aria-label={t('dashboard.batchImport')}
                 className={`${ACTION_BTN_PRIMARY} ml-auto`}
               >
                 <BatchImportIcon />
                 <span className="hidden sm:inline">{t('dashboard.batchImport')}</span>
               </button>
+              <OneClickImport className={`${ACTION_BTN_PRIMARY} ml-auto`} />
               {/* 验活进度浮动入口：设计稿无此项，为保留既有能力挂在主按钮左侧 */}
               {verifying && !verifyDialogOpen && (
                 <button type="button" onClick={openVerifyDialog} className={ACTION_BTN}>

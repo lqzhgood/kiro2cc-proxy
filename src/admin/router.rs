@@ -33,6 +33,10 @@ pub fn create_admin_router(state: AdminState) -> Router {
     // 受 header 认证中间件保护的路由
     let protected = Router::new()
         .route(
+            "/fork/import-config",
+            get(super::fork_import::get_import_config),
+        )
+        .route(
             "/credentials",
             get(get_all_credentials).post(add_credential),
         )

@@ -1,0 +1,36 @@
+name: Fork one-click import
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  import-ui:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm --prefix web-ui/admin-ui install
+      - run: npm --prefix tools/one-click-import ci
+      - run: npx playwright install --with-deps chromium
+        working-directory: tools/one-click-import
+      - run: npm run verify
+        working-directory: tools/one-click-import
+  export-script:
+    runs-on: macos-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - run: bash -n scripts/fork/get-kiro-info.sh
+      - run: python3 tools/one-click-import/test_export.py

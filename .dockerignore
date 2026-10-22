@@ -45,6 +45,8 @@ tools/
 Thumbs.db
 
 # Local configuration (keep templates only)
+.env
+.env.*
 config.json
 credentials.json
 
