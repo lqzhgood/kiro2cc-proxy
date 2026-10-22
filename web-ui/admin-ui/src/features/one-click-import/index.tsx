@@ -11,6 +11,8 @@ import { importAccounts, type ImportResult } from './import-accounts'
 import { messages } from './messages'
 import { loadExportCommand } from './runtime-config'
 
+const outlinedButtonClassName = 'border-ink-3 bg-surface-2 shadow-none hover:border-ink-2 hover:bg-surface-3 focus-visible:ring-2'
+
 export function OneClickImport({ className }: { className?: string }) {
   const { i18n } = useTranslation()
   const text = messages[i18n.language.startsWith('en') ? 'en' : 'zh']
@@ -160,17 +162,19 @@ function ImportDialog({ onClose }: { onClose: () => void }) {
             <span className="rounded bg-surface-3 px-2 py-1 text-xs text-ink-3">{text.macOnly}</span>
           </div>
           <p className="text-xs leading-relaxed text-ink-3">{text.commandHint}</p>
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button type="button" variant="outline" size="sm" className={outlinedButtonClassName} disabled={!command} onClick={() => void copyCommand()}><Copy className="h-4 w-4" />{text.copy}</Button>
+          </div>
           <textarea ref={commandRef} aria-label={text.step1} value={command} placeholder={configStatus === 'loading' ? text.configLoading : text.configMissing} readOnly spellCheck={false} rows={6} className="w-full resize-none rounded-md border border-hairline-2 bg-surface-2 p-3 font-mono text-xs leading-relaxed sm:h-24" />
-          <Button type="button" variant="outline" size="sm" disabled={!command} onClick={() => void copyCommand()}><Copy className="mr-2 h-4 w-4" />{text.copy}</Button>
           {configStatus === 'missing' && <p role="status" className="text-xs text-ink-3">{text.configMissing}</p>}
           {configStatus === 'error' && <p role="status" className="text-xs text-ink-3">{text.configError}</p>}
           {copyNotice && <p role="status" className="text-xs text-ink-3">{copyNotice}</p>}
         </section>
         <section className="space-y-2">
           <label htmlFor="one-click-import-data" className="block text-sm font-semibold">{text.step2}</label>
-          <div className="flex flex-wrap gap-2">
-            <Button type="button" variant="outline" size="sm" disabled={importing || finished} onClick={() => void paste(true)}><ClipboardPaste className="mr-2 h-4 w-4" />{text.paste}</Button>
-            <Button type="button" variant="ghost" size="sm" disabled={importing || finished} onClick={() => changeInput('')}>{text.clear}</Button>
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button type="button" variant="outline" size="sm" className={outlinedButtonClassName} disabled={importing || finished} onClick={() => void paste(true)}><ClipboardPaste className="h-4 w-4" />{text.paste}</Button>
+            <Button type="button" variant="outline" size="sm" className={outlinedButtonClassName} disabled={importing || finished} onClick={() => changeInput('')}>{text.clear}</Button>
           </div>
           <textarea id="one-click-import-data" value={input} onChange={event => changeInput(event.target.value)} disabled={importing || finished} autoComplete="off" spellCheck={false} rows={7} placeholder={text.placeholder} aria-invalid={Boolean(error)} aria-describedby={error ? 'one-click-import-error' : 'one-click-import-hint'} className="w-full rounded-md border border-hairline-2 bg-surface-2 p-3 font-mono text-xs leading-relaxed focus-visible:outline-brand disabled:opacity-60" />
           <p id="one-click-import-hint" className="text-xs text-ink-3">{text.clipboardHint}</p>
@@ -183,8 +187,8 @@ function ImportDialog({ onClose }: { onClose: () => void }) {
         </ul>}
         <p className="text-xs text-ink-3">{text.privacy}</p>
       </div>
-      <DialogFooter className="shrink-0">
-        <Button type="button" variant="outline" disabled={importing} onClick={onClose}>{finished ? text.close : text.cancel}</Button>
+      <DialogFooter className="shrink-0 gap-2 sm:space-x-0">
+        <Button type="button" variant="outline" className={outlinedButtonClassName} disabled={importing} onClick={onClose}>{finished ? text.close : text.cancel}</Button>
         {!finished && <Button type="button" disabled={importing || !input.trim()} onClick={() => void submit()}>{text.confirm}</Button>}
       </DialogFooter>
     </DialogContent>
