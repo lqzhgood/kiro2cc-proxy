@@ -205,6 +205,8 @@ export interface ModelItem {
   rate_multiplier?: number | null
   /** 模型发布日期（YYYY-MM-DD）；未登记为 null，前端据此实时计算「最近新增」标记 */
   released_at?: string | null
+  /** 官方模型描述；上游未返回或回退静态表时为 null */
+  description?: string | null
 }
 
 export interface ModelsResponse {
@@ -309,6 +311,19 @@ export interface CredentialDaySummary {
   totalCreditsSaved?: number
 }
 
+// 单账号在 CST 最近 N 天（含今日）的用量汇总（后端 /credentials/:id/usage/7days、/30days）
+export interface CredentialRangeSummary {
+  credentialId: number
+  fromDate: string       // "2026-10-16" CST，区间起始日（含）
+  toDate: string         // 区间结束日（含），恒为今日
+  totalRequests: number
+  totalInputTokens: number
+  totalOutputTokens: number
+  totalCost: number
+  totalCredits: number
+  totalCreditsSaved?: number
+}
+
 // 单条限流日志记录
 export interface ThrottleLogRecord {
   credentialId: number
@@ -343,4 +358,22 @@ export interface FailureLogsResponse {
   page: number
   pageSize: number
   totalPages: number
+}
+
+// 单个 dump 文件元数据（后端 /dump-kiro-body/files，字段为 camelCase 序列化）
+export interface DumpFileMeta {
+  name: string
+  sizeBytes: number
+  /** 取文件名内毫秒时间戳，不取文件系统 mtime（后端决策 9） */
+  createdAtMs: number
+}
+
+// dump 文件清单响应（后端 /dump-kiro-body/files）
+export interface DumpFilesResponse {
+  files: DumpFileMeta[]
+  totalBytes: number
+  /** 后端保留的 dump 文件数上限，用于向管理员展示滚动清理语义 */
+  maxFiles: number
+  /** 归档总量上限，前端据此判断是否提示截断，不硬编码阈值 */
+  maxArchiveBytes: number
 }

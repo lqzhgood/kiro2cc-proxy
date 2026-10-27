@@ -8,13 +8,15 @@ use axum::{
 
 use super::{
     api_keys::{
-        create_api_key, delete_api_key, get_admin_models, get_all_usage, get_credential_models,
+        create_api_key, delete_api_key, get_admin_models, get_all_usage,
+        get_credential_7days_summary, get_credential_30days_summary, get_credential_models,
         get_credential_today_summary, get_credential_usage_records, get_credential_usage_summary,
         get_daily_usage, get_daily_usage_records, get_failure_logs, get_key_usage,
         get_key_usage_records, get_rpm, get_server_info, get_throttle_logs, get_usage_records,
         list_api_keys, reset_key_usage, update_api_key,
     },
     changelog::get_changelog,
+    dump_handler::{download_dump_archive, download_dump_file, list_dump_files_handler},
     handlers::{
         add_credential, delete_credential, get_all_credentials, get_auth_keys,
         get_client_token_passthrough, get_credential_balance, get_debug_logs, get_dump_kiro_body,
@@ -56,6 +58,14 @@ pub fn create_admin_router(state: AdminState) -> Router {
         .route(
             "/credentials/{id}/usage/today",
             get(get_credential_today_summary),
+        )
+        .route(
+            "/credentials/{id}/usage/7days",
+            get(get_credential_7days_summary),
+        )
+        .route(
+            "/credentials/{id}/usage/30days",
+            get(get_credential_30days_summary),
         )
         .route(
             "/credentials/{id}/usage/summary",
@@ -108,13 +118,17 @@ pub fn create_admin_router(state: AdminState) -> Router {
         .route("/usage/daily/{date}/records", get(get_daily_usage_records))
         .route("/usage/records", get(get_usage_records))
         .route("/geo/batch", get(get_geo_batch))
+        // dump 落盘文件的浏览与下载（列表 / 单文件 / 全量 ZIP）
+        .route("/dump-kiro-body/files", get(list_dump_files_handler))
+        .route("/dump-kiro-body/files/{name}", get(download_dump_file))
+        .route("/dump-kiro-body/archive", get(download_dump_archive))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             admin_auth_middleware,
         ))
         .with_state(state.clone());
 
-    // 日志路由使用 Query Param 内联认证（EventSource API 不支持自定义 Header）
+    // 日志路由使用内联认证：Query Param（EventSource 不支持自定义 Header）或 x-api-key / Bearer 头
     let log_routes = Router::new()
         .route("/logs/stream", get(stream_logs))
         .route("/logs/snapshot", get(snapshot_logs))

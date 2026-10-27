@@ -3,7 +3,10 @@
 #[cfg(test)]
 mod tests {
 
-    use crate::model::usage::{RecordOptions, UsageTracker, calculate_cost, get_k_ref};
+    use crate::model::usage::{
+        RecordOptions, UsageTracker, calculate_cost, get_k_ref, infer_cache_read_from_credits,
+        refine_prefix_cache_read,
+    };
     use std::collections::HashMap;
 
     /// 每个测试使用独立目录隔离明细文件与累计基数文件（api_key_lifetime.json
@@ -922,6 +925,148 @@ mod tests {
         cleanup_usage_path(&path);
     }
 
+    /// range：零记录返回零值汇总（from/to 仍为合法区间，不报错）
+    #[tokio::test]
+    async fn test_range_summary_for_credential_zero_when_no_records() {
+        let path = temp_usage_path("range_summary_empty");
+        let tracker = UsageTracker::load(&path).unwrap();
+
+        let s = tracker.get_range_summary_for_credential(42, 7);
+
+        assert_eq!(s.credential_id, 42);
+        assert_eq!(s.total_requests, 0);
+        assert_eq!(s.total_input_tokens, 0);
+        assert_eq!(s.total_output_tokens, 0);
+        assert_eq!(s.total_cache_read_tokens, 0);
+        assert_eq!(s.total_cost, 0.0);
+        assert_eq!(s.total_credits, 0.0);
+        assert_eq!(s.total_credits_saved, 0.0);
+        // 锁定窗口两端语义：to_date = 今日（CST），from_date = 今日 - (days-1)
+        let cst = chrono::FixedOffset::east_opt(8 * 3600).unwrap();
+        let today = chrono::Utc::now().with_timezone(&cst).date_naive();
+        assert_eq!(s.to_date, today.to_string());
+        assert_eq!(s.from_date, (today - chrono::Duration::days(6)).to_string());
+        // JSON 契约：camelCase 键名必须与前端 CredentialRangeSummary 类型一致，
+        // 防止 rename_all 被移除或字段改名后前端静默拿到 undefined
+        let json = serde_json::to_value(&s).unwrap();
+        assert_eq!(json["credentialId"], 42);
+        assert_eq!(json["fromDate"], s.from_date.as_str());
+        assert_eq!(json["toDate"], today.to_string().as_str());
+        assert_eq!(json["totalRequests"], 0);
+        assert_eq!(json["totalInputTokens"], 0);
+        assert_eq!(json["totalOutputTokens"], 0);
+        assert_eq!(json["totalCost"], 0.0);
+        assert_eq!(json["totalCredits"], 0.0);
+        assert_eq!(json["totalCreditsSaved"], 0.0);
+        assert_eq!(json["totalCacheReadTokens"], 0);
+        cleanup_usage_path(&path);
+    }
+
+    /// range：区间窗口归属——「今日」记录计入，「昨日之前（超出 days-1 窗口）」不计入；
+    /// 账号隔离：其他账号的区间内记录不影响本账号汇总
+    #[tokio::test]
+    async fn test_range_summary_for_credential_window_and_isolation() {
+        let path = temp_usage_path("range_summary_window");
+        let tracker = UsageTracker::load(&path).unwrap();
+
+        // 今日（CST）记录：3 次请求
+        let cst = chrono::FixedOffset::east_opt(8 * 3600).unwrap();
+        let today = chrono::Utc::now().with_timezone(&cst).date_naive();
+        let to_utc = |d: chrono::NaiveDate| {
+            d.and_hms_opt(12, 0, 0)
+                .unwrap()
+                .and_local_timezone(cst)
+                .unwrap()
+                .with_timezone(&chrono::Utc)
+        };
+        let today_noon_utc = to_utc(today);
+
+        // 窗口内但非今日：days=7 时应为 from 日当天（今日-6）
+        let in_window_utc = to_utc(today - chrono::Duration::days(6));
+
+        // 窗口外：今日-7（days=7 的 from 前一天）
+        let out_window_utc = to_utc(today - chrono::Duration::days(7));
+
+        inject_credential_record_at(&tracker, 7, today_noon_utc, 0.5, None);
+        inject_credential_record_at(&tracker, 7, in_window_utc, 0.5, None);
+        inject_credential_record_at(&tracker, 7, out_window_utc, 9.0, None);
+        // 其他账号（区间内）：不应计入 cred 7
+        inject_credential_record_at(&tracker, 8, today_noon_utc, 9.0, None);
+
+        let s7 = tracker.get_range_summary_for_credential(7, 7);
+        assert_eq!(s7.total_requests, 2); // 今日 + 窗口内非今日
+        assert_eq!(s7.total_cost, 1.0); // 0.5 + 0.5，窗口外 9.0 不计入
+        assert_eq!(
+            s7.from_date,
+            (today - chrono::Duration::days(6)).to_string()
+        );
+
+        // days=1 退化为「仅今日」：与 today 语义等价
+        let s1 = tracker.get_range_summary_for_credential(7, 1);
+        assert_eq!(s1.total_requests, 1);
+        assert_eq!(s1.from_date, today.to_string());
+
+        // days=30：窗口覆盖同批记录（仍是 2 条，out_window 在今日-7 落在 30 天窗口内）
+        let s30 = tracker.get_range_summary_for_credential(7, 30);
+        assert_eq!(s30.total_requests, 3);
+
+        // 账号隔离
+        let s8 = tracker.get_range_summary_for_credential(8, 7);
+        assert_eq!(s8.total_requests, 1);
+
+        cleanup_usage_path(&path);
+    }
+
+    /// range：days=0 兜底为 1（不 panic，等价今日）
+    #[tokio::test]
+    async fn test_range_summary_for_credential_days_zero_clamps_to_one() {
+        let path = temp_usage_path("range_summary_zero_days");
+        let tracker = UsageTracker::load(&path).unwrap();
+        let cst = chrono::FixedOffset::east_opt(8 * 3600).unwrap();
+        let today = chrono::Utc::now().with_timezone(&cst).date_naive();
+        let noon_utc = today
+            .and_hms_opt(12, 0, 0)
+            .unwrap()
+            .and_local_timezone(cst)
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        inject_credential_record_at(&tracker, 9, noon_utc, 0.1, None);
+
+        let s = tracker.get_range_summary_for_credential(9, 0);
+        assert_eq!(s.total_requests, 1);
+        assert_eq!(s.from_date, today.to_string());
+
+        cleanup_usage_path(&path);
+    }
+
+    /// range：credits 聚合口径——credits_used 优先、缺失按 estimated_cost * k_ref 回退；
+    /// credits_saved 仅在有真实 credits_used 时累计
+    #[tokio::test]
+    async fn test_range_summary_for_credential_credits_accounting() {
+        let path = temp_usage_path("range_summary_credits");
+        let tracker = UsageTracker::load(&path).unwrap();
+        let cst = chrono::FixedOffset::east_opt(8 * 3600).unwrap();
+        let today = chrono::Utc::now().with_timezone(&cst).date_naive();
+        let noon_utc = today
+            .and_hms_opt(12, 0, 0)
+            .unwrap()
+            .and_local_timezone(cst)
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+
+        // credits_used=Some(2.0)：credits += 2.0；saved += cost*k - 2.0
+        inject_credential_record_at(&tracker, 5, noon_utc, 1.0, Some(2.0));
+        // credits_used=None：credits += cost * k_ref
+        inject_credential_record_at(&tracker, 5, noon_utc, 3.0, None);
+
+        let s = tracker.get_range_summary_for_credential(5, 7);
+        let k = get_k_ref("claude-opus-4.6");
+        assert!((s.total_credits - (2.0 + 3.0 * k)).abs() < 1e-9);
+        assert!((s.total_credits_saved - (1.0 * k - 2.0)).abs() < 1e-9);
+
+        cleanup_usage_path(&path);
+    }
+
     #[tokio::test]
     async fn test_summary_for_credential_clamps_negative_tokens() {
         let path = temp_usage_path("cred_summary_neg");
@@ -957,5 +1102,117 @@ mod tests {
         // 只有带 credits_used 的记录贡献节省额；回退估算的记录不参与
         assert!((summary.total_credits_saved - (get_k_ref("claude-opus-4.6") - 0.5)).abs() < 1e-9);
         cleanup_usage_path(&path);
+    }
+
+    #[test]
+    fn test_pricing_infer_cache_read_haiku_5_5_standard_and_long_context() {
+        // 常态档（<= 100K）实测部分失效样本：input=53776, prefix=53650, out=346, credits=0.06617
+        let refined =
+            refine_prefix_cache_read("claude-haiku-5-5", 53_650, 53_776, 346, Some(0.06617));
+        assert!(
+            (20_000..=22_500).contains(&refined),
+            "常态档部分失效反推应落在 [20000, 22500]，实际: {}",
+            refined
+        );
+
+        // 常态档高命中样本：反推值若超过静态前缀，应被 prefix_estimated_tokens 上界截断
+        let capped =
+            refine_prefix_cache_read("claude-haiku-5-5", 52_000, 53_776, 100, Some(0.0110));
+        assert_eq!(capped, 52_000);
+
+        // 长上下文档（> 100K）实测半截命中样本：input=122222, prefix=121100, out=857, credits=0.70897
+        let long_partial =
+            refine_prefix_cache_read("claude-haiku-5-5", 121_100, 122_222, 857, Some(0.70897));
+        assert!(
+            (30_000..=35_000).contains(&long_partial),
+            "长上下文档半截命中反推应落在 [30000, 35000]，实际: {}",
+            long_partial
+        );
+
+        // 长上下文档全量未命中样本：credits >= 0.86 时 cache_read 应下修为 0
+        let long_miss =
+            refine_prefix_cache_read("claude-haiku-5-5", 121_100, 122_222, 319, Some(0.86999));
+        assert_eq!(long_miss, 0);
+    }
+
+    #[test]
+    fn test_pricing_infer_cache_read_other_claude_and_boundaries() {
+        // Sonnet / Opus / Haiku 4.5 全量未命中（高 credits）→ 下修为 0
+        for model in [
+            "claude-sonnet-4-6",
+            "claude-opus-4-6",
+            "claude-opus-5-5",
+            "claude-haiku-4-5",
+        ] {
+            let miss = refine_prefix_cache_read(model, 45_000, 50_000, 500, Some(9.99));
+            assert_eq!(miss, 0, "{} 全量未命中应下修为 0", model);
+            // 正常高命中受 prefix_estimated_tokens 上界保护
+            let hit = refine_prefix_cache_read(model, 45_000, 50_000, 500, Some(0.01));
+            assert_eq!(hit, 45_000, "{} 正常命中应受静态前缀上界约束", model);
+        }
+
+        // 首轮 / history[0] 重置门控（prefix_estimated == 0）→ 无论 credits 多低均锁定为 0
+        assert_eq!(
+            refine_prefix_cache_read("claude-haiku-5-5", 0, 50_000, 100, Some(0.001)),
+            0
+        );
+        // 短输入（< 4096）跳过反推，保留静态前缀估算
+        assert_eq!(
+            refine_prefix_cache_read("claude-haiku-5-5", 300, 500, 100, Some(0.5)),
+            300
+        );
+        // 非 Claude 模型跳过反推，保留静态前缀估算
+        assert_eq!(
+            infer_cache_read_from_credits("gpt-5.6-luna", 50_000, 100, 0.01),
+            None
+        );
+        assert_eq!(
+            refine_prefix_cache_read("gpt-5.6-luna", 40_000, 50_000, 100, Some(9.9)),
+            40_000
+        );
+        // 无 meteringEvent 时保留静态前缀估算
+        assert_eq!(
+            refine_prefix_cache_read("claude-haiku-5-5", 40_000, 50_000, 100, None),
+            40_000
+        );
+    }
+
+    #[test]
+    fn test_pricing_infer_cache_read_exact_thresholds_and_standard_miss() {
+        let model = "claude-haiku-5-5";
+        assert_eq!(
+            refine_prefix_cache_read(model, 4_000, 4_095, 0, Some(9.99)),
+            4_000
+        );
+        assert_eq!(
+            refine_prefix_cache_read(model, 4_000, 4_096, 0, Some(9.99)),
+            0
+        );
+        for (input, r_miss, r_out) in [(100_000, 1.6978, 19.1873), (100_001, 6.7830, 93.9200)] {
+            let credits =
+                (r_miss * input as f64 + r_out * 100.0 - 0.90 * r_miss * 20_000.0) / 1_000_000.0;
+            assert_eq!(
+                infer_cache_read_from_credits(model, input, 100, credits),
+                Some(20_000)
+            );
+        }
+        let full_price = (1.6978 * 53_776.0 + 19.1873 * 346.0) / 1_000_000.0;
+        assert_eq!(
+            refine_prefix_cache_read(model, 53_650, 53_776, 346, Some(full_price)),
+            0
+        );
+    }
+
+    #[test]
+    fn test_pricing_infer_cache_read_fable_uses_opus_rates() {
+        // fable 按 Opus 档 (r_miss=11.8, r_out=59.0) 反推
+        assert_eq!(
+            infer_cache_read_from_credits("claude-fable-5", 50_000, 500, 0.4071),
+            Some(20_000)
+        );
+        assert_eq!(
+            infer_cache_read_from_credits("claude-fable-5", 50_000, 500, 0.6195),
+            Some(0)
+        );
     }
 }

@@ -4,6 +4,37 @@
 mod tests {
     use crate::anthropic::stream::{StreamContext, context_window_for_model};
 
+    /// 捕获 INFO 级 tracing 输出（同步闭包），返回 (闭包返回值, 日志文本)
+    fn capture_info_logs<T>(f: impl FnOnce() -> T) -> (T, String) {
+        use std::io::Write;
+        use std::sync::{Arc, Mutex};
+
+        #[derive(Clone, Default)]
+        struct BufWriter(Arc<Mutex<Vec<u8>>>);
+        impl Write for BufWriter {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let buf = BufWriter::default();
+        let writer = buf.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::INFO)
+            .with_ansi(false)
+            .with_writer(move || writer.clone())
+            .finish();
+        let result = tracing::subscriber::with_default(subscriber, f);
+        (
+            result,
+            String::from_utf8(buf.0.lock().unwrap().clone()).unwrap(),
+        )
+    }
+
     #[test]
     fn test_empty_response_detected() {
         // 上游完全没发任何内容事件 → is_empty_response 为 true
@@ -60,8 +91,8 @@ mod tests {
         // 大上下文（>28万）+ 极短输出（< 30 tokens）+ 无工具调用 → 视为退化空响应
         let mut ctx = StreamContext::new_with_thinking("test-model", 300_000, false);
         let _ = ctx.generate_initial_events();
-        // 模拟极短输出（40 个非中文字符 = 10 token）
-        ctx.output_chars_other = 40;
+        // 模拟极短输出（40 个 'a'，BPE 8 字符合并 1 token = 5 token）
+        ctx.output_full_text = "a".repeat(40);
         assert!(
             ctx.is_empty_response(),
             "大上下文+极短输出应判定为近似空响应"
@@ -73,7 +104,7 @@ mod tests {
         // 小上下文 + 极短输出 → 不应判定为空响应（可能是正常的短回复）
         let mut ctx = StreamContext::new_with_thinking("test-model", 50_000, false);
         let _ = ctx.generate_initial_events();
-        ctx.output_chars_other = 40;
+        ctx.output_full_text = "a".repeat(40);
         assert!(
             !ctx.is_empty_response(),
             "小上下文+极短输出不应判定为空响应"
@@ -85,9 +116,19 @@ mod tests {
         // 大上下文 + 极短输出 + 有工具调用 → 不应判定为空响应（工具调用是有效响应）
         let mut ctx = StreamContext::new_with_thinking("test-model", 300_000, false);
         let _ = ctx.generate_initial_events();
-        ctx.output_chars_other = 40;
+        ctx.output_full_text = "a".repeat(40);
         ctx.state_manager.set_has_tool_use(true);
         assert!(!ctx.is_empty_response(), "有工具调用时不应判定为空响应");
+    }
+
+    #[test]
+    fn test_near_empty_long_output_not_flagged_at_byte_boundary() {
+        // 3841 字节 > 30 × 128：在 cl100k 单 token 最长 128 字节的前提下必然 ≥ 31 token；
+        // 本用例校验短路结论与全文编码一致（等价性保护），不单独证明短路分支本身
+        let mut ctx = StreamContext::new_with_thinking("test-model", 300_000, false);
+        let _ = ctx.generate_initial_events();
+        ctx.output_full_text = "a".repeat(3841);
+        assert!(!ctx.is_empty_response());
     }
 
     #[test]
@@ -198,5 +239,148 @@ mod tests {
         assert!(page.records[0].first_token_ms.is_none());
         assert!(page.records[0].duration_ms.is_none());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn test_stream_context_refines_cache_read_from_metering_credits() {
+        let dir = std::env::temp_dir().join(format!("kiro2cc_ctx_refine_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("api_key_usage.json");
+        let tracker = std::sync::Arc::new(crate::model::usage::UsageTracker::load(&path).unwrap());
+
+        for (continued, key_id) in [(false, 1), (true, 2)] {
+            let mut ctx = StreamContext::new_with_thinking("claude-haiku-5-5", 53_776, false)
+                .with_prefix_estimated_tokens(53_650)
+                .with_conversation_id(Some(format!("miss-diag-integration-{key_id}")))
+                .with_usage_tracking(
+                    Some(std::sync::Arc::clone(&tracker)),
+                    Some(key_id),
+                    Some(7),
+                    None,
+                    None,
+                );
+
+            // message_start 阶段尚未收到 meteringEvent，保持静态前缀估算 53_650
+            let (_, _, start_cache_read) = ctx.derive_report_cache_usage(53_776, None, 0);
+            assert_eq!(start_cache_read, 53_650);
+            let _ = ctx.generate_initial_events();
+
+            // 模拟 346 tokens 输出（BPE 8 个 'a' 合并 1 token，2768 = 346）与部分缓存失效的 meteringEvent
+            ctx.output_full_text = "a".repeat(346 * 8);
+            let metering_event = crate::kiro::model::events::Event::Metering(
+                crate::kiro::model::events::MeteringEvent {
+                    usage: 0.06617,
+                    unit_plural: "credits".to_string(),
+                    unit: String::new(),
+                    cache_read_input_tokens: None,
+                    cache_creation_input_tokens: None,
+                },
+            );
+            let _ = ctx.process_kiro_event(&metering_event);
+            if continued {
+                ctx.mark_continuation();
+            }
+            // [cache-miss] 诊断：非续流轮 credits 反推生效（命中率 ~39%）应触发一次；
+            // 续流轮回退静态前缀（inference_applied=false）不触发
+            let (final_events, diag_out) = capture_info_logs(|| ctx.generate_final_events());
+            if continued {
+                assert!(!diag_out.contains("[cache-miss]"), "{diag_out}");
+            } else {
+                assert_eq!(diag_out.matches("[cache-miss]").count(), 1, "{diag_out}");
+                assert!(
+                    diag_out.contains("session=miss-diag-integration-1"),
+                    "{diag_out}"
+                );
+            }
+
+            // 1. 验证 UsageTracker 落库的 cache_read_input_tokens 已按 creditsUsed 反推下修
+            let page = tracker.get_records_paged(key_id, 1, 10, &std::collections::HashMap::new());
+            assert_eq!(page.records.len(), 1);
+            let recorded_read = page.records[0].cache_read_input_tokens.unwrap();
+            if continued {
+                assert_eq!(recorded_read, 53_650);
+            } else {
+                assert!((20_000..=22_500).contains(&recorded_read));
+            }
+            assert_eq!(page.records[0].credits_used, Some(0.06617));
+
+            // 2. 末尾 message_delta 保持静态前缀口径，与 message_start 一致
+            let delta_evt = final_events
+                .iter()
+                .find(|e| e.event == "message_delta")
+                .unwrap();
+            let delta_read = delta_evt.data["usage"]["cache_read_input_tokens"]
+                .as_i64()
+                .unwrap() as i32;
+            assert_eq!(
+                delta_read,
+                crate::anthropic::stream::calib::scale_for_client(53_650, "claude-haiku-5-5")
+            );
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn test_stream_context_accounting_precedes_credit_inference() {
+        use crate::cache::breakpoint::{BreakpointCache, CacheAccounting};
+        use crate::kiro::model::events::{Event, MeteringEvent};
+
+        let cache = std::sync::Arc::new(BreakpointCache::new(1, None));
+        let body = bytes::Bytes::from(
+            serde_json::to_vec(&serde_json::json!({
+                "model": "claude-haiku-5-5",
+                "system": [{
+                    "type": "text",
+                    "text": "stable prefix ".repeat(100),
+                    "cache_control": {"type": "ephemeral", "ttl": "1h"}
+                }],
+                "messages": [{"role": "user", "content": "question"}]
+            }))
+            .unwrap(),
+        );
+        for cached in [false, true] {
+            let accounting = CacheAccounting::from_request(
+                &cache,
+                body.clone(),
+                "test-key".into(),
+                "claude-haiku-5-5".into(),
+            )
+            .await
+            .unwrap();
+            let expected = accounting.usage_for(53_776);
+            if cached {
+                assert!(expected.cache_read_input_tokens > 0);
+            } else {
+                assert!(expected.cache_creation_input_tokens > 0);
+            }
+            let mut ctx = StreamContext::new_with_thinking("claude-haiku-5-5", 53_776, false)
+                .with_prefix_estimated_tokens(53_650)
+                .with_cache_accounting(Some(accounting.clone()));
+            for continued in [false, true] {
+                if continued {
+                    ctx.mark_continuation();
+                }
+                assert_eq!(
+                    ctx.derive_report_cache_usage(53_776, Some(9.99), 0),
+                    (
+                        expected.input_tokens,
+                        expected.cache_creation_input_tokens,
+                        expected.cache_read_input_tokens
+                    )
+                );
+            }
+            ctx.process_kiro_event(&Event::Metering(MeteringEvent {
+                usage: 9.99,
+                unit_plural: "credits".into(),
+                unit: String::new(),
+                cache_read_input_tokens: Some(600),
+                cache_creation_input_tokens: Some(200),
+            }));
+            assert_eq!(
+                ctx.derive_report_cache_usage(53_776, Some(9.99), 0),
+                (52_976, 200, 600)
+            );
+            accounting.commit();
+        }
     }
 }

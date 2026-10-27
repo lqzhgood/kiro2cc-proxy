@@ -18,11 +18,13 @@ import type {
   UsageRecordsResponse,
   DailySummary,
   CredentialDaySummary,
+  CredentialRangeSummary,
   CredentialUsageSummary,
   ThrottleLogsResponse,
   FailureLogsResponse,
   ModelsResponse,
   ReleaseNotesResponse,
+  DumpFilesResponse,
 } from '@/types/api'
 
 // 创建 axios 实例
@@ -205,6 +207,12 @@ export async function setDebugLogs(enabled: boolean): Promise<{ success: boolean
   return data
 }
 
+// 获取 dump 落盘文件清单（仅 JSON；二进制下载走 fetch + Blob，不经本层）
+export async function getDumpFiles(): Promise<DumpFilesResponse> {
+  const { data } = await api.get<DumpFilesResponse>('/dump-kiro-body/files')
+  return data
+}
+
 // ============ 服务器信息 ============
 
 // 获取服务器信息
@@ -300,6 +308,17 @@ export async function getCredentialTodaySummary(
 ): Promise<CredentialDaySummary> {
   const { data } = await api.get<CredentialDaySummary>(
     `/credentials/${id}/usage/today`
+  )
+  return data
+}
+
+// 获取单账号 CST 最近 N 天（含今日）的用量汇总（7days / 30days）
+export async function getCredentialRangeSummary(
+  id: number,
+  range: '7days' | '30days'
+): Promise<CredentialRangeSummary> {
+  const { data } = await api.get<CredentialRangeSummary>(
+    `/credentials/${id}/usage/${range}`
   )
   return data
 }

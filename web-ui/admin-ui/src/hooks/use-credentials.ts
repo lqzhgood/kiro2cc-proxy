@@ -18,6 +18,7 @@ import {
   setThinkingAsText,
   getDumpKiroBody,
   setDumpKiroBody,
+  getDumpFiles,
   getDebugLogs,
   setDebugLogs,
   getRuntimeConfig,
@@ -37,6 +38,7 @@ import {
   getCredentialUsageRecords,
   getCredentialUsageSummary,
   getCredentialTodaySummary,
+  getCredentialRangeSummary,
   getDailyUsage,
   getDailyUsageRecords,
   getUsageRecordsByRange,
@@ -270,6 +272,15 @@ export function useSetDumpKiroBody() {
   })
 }
 
+// 查询 dump 落盘文件清单（`enabled` 由弹窗开关状态驱动，弹窗关闭时不请求）
+export function useDumpFiles(enabled: boolean) {
+  return useQuery({
+    queryKey: ['dumpFiles'],
+    queryFn: getDumpFiles,
+    enabled,
+  })
+}
+
 // 获取 DEBUG 日志开关
 export function useDebugLogs() {
   return useQuery({
@@ -382,22 +393,42 @@ export function useCredentialUsageRecords(id: number, page: number, pageSize = 5
   })
 }
 
-// 查询单账号全部留存记录的用量汇总（60s 自动刷新）
-export function useCredentialUsageSummary(id: number) {
+// 查询单账号全部留存记录的用量汇总（60s 自动刷新；enabled=false 时停止请求与轮询）
+export function useCredentialUsageSummary(id: number, enabled = true) {
   return useQuery({
     queryKey: ['credentialUsageSummary', id],
     queryFn: () => getCredentialUsageSummary(id),
-    enabled: id > 0,
+    enabled: enabled && id > 0,
     refetchInterval: 60000,
   })
 }
 
-// 查询单账号 CST 今日用量汇总（60s 自动刷新）
-export function useCredentialTodaySummary(id: number) {
+// 查询单账号 CST 今日用量汇总（60s 自动刷新；enabled=false 时停止请求与轮询）
+export function useCredentialTodaySummary(id: number, enabled = true) {
   return useQuery({
     queryKey: ['credentialTodaySummary', id],
     queryFn: () => getCredentialTodaySummary(id),
-    enabled: id > 0,
+    enabled: enabled && id > 0,
+    refetchInterval: 60000,
+  })
+}
+
+// 查询单账号 CST 最近 7 天用量汇总（60s 自动刷新；enabled=false 时停止请求与轮询）
+export function useCredential7DaysSummary(id: number, enabled = true) {
+  return useQuery({
+    queryKey: ['credential7DaysSummary', id],
+    queryFn: () => getCredentialRangeSummary(id, '7days'),
+    enabled: enabled && id > 0,
+    refetchInterval: 60000,
+  })
+}
+
+// 查询单账号 CST 最近 30 天用量汇总（60s 自动刷新；enabled=false 时停止请求与轮询）
+export function useCredential30DaysSummary(id: number, enabled = true) {
+  return useQuery({
+    queryKey: ['credential30DaysSummary', id],
+    queryFn: () => getCredentialRangeSummary(id, '30days'),
+    enabled: enabled && id > 0,
     refetchInterval: 60000,
   })
 }

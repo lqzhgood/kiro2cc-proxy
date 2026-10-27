@@ -67,6 +67,120 @@ const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub fn build_release_notes() -> Vec<ReleaseNote> {
     let mut notes = vec![
         ReleaseNote {
+            version: "3.4.40".to_string(),
+            is_latest: false,
+            groups: vec![
+                feat_group(vec![
+                    Bilingual::new(
+                        "输出 Tokens 口径由字符估算改为 tiktoken BPE 真值，与思考徽章同口径：修复「总输出 Token 数少于深度思考 Token 数」的矛盾（旧口径对思考内容按不同比例估算，导致两者难以直接比较）。流式与非流式桥接路径均已切换，工具调用参数一并计入",
+                        "Output token counting switched from character estimation to real tiktoken BPE values, sharing the same tokenizer as the thinking badge. This fixes the contradiction where total output tokens appeared smaller than the thinking token count (the old formula estimated thinking content with a different ratio, making the two numbers incomparable). Both streaming and non-streaming bridge paths are migrated, and tool-call arguments are included",
+                    ),
+                    Bilingual::new(
+                        "根据上游 credits 消耗校准缓存读取用量：结合静态前缀上界与 creditsUsed 反推实际命中的缓存 token 数，接入流式落库与非流式响应（此前 Kiro 的 meteringEvent 不返回 cache_read 真值，缓存读取长期不可观测）",
+                        "Cache-read usage is now calibrated from upstream credit consumption: the actual cached token count is inferred by combining the static prefix upper bound with creditsUsed, wired into streaming persistence and non-streaming responses (Kiro's meteringEvent does not report cache_read, so cache reads were previously unobservable)",
+                    ),
+                    Bilingual::new(
+                        "新增 [cache-miss] INFO 诊断日志：credits 反推发现上游缓存部分未命中（命中率 < 80%）时输出命中率、缺失 token 数、与上次结算的闲置间隔及凭据是否变化，用于区分 TTL 逐出、换账号与上游换实例三种原因",
+                        "Added [cache-miss] INFO diagnostics: when credit inference shows a partial upstream cache miss (hit rate < 80%), the log reports the hit ratio, missing tokens, the idle gap since the previous settlement and whether the credential changed, helping tell apart TTL eviction, account switching and upstream instance changes",
+                    ),
+                ]),
+                improve_group(vec![
+                    Bilingual::new(
+                        "缓存漂移诊断提升为 INFO 并按请求类型匹配快照：同一会话混入的标题生成、额度探测、子代理等辅助请求不再被误报为主对话漂移；每个会话保留至多 4 份快照，按系统块重叠字节数匹配最相似的一份，与所有快照都无重叠时标注为「新请求类型」",
+                        "Cache drift diagnostics moved to INFO and now match snapshots by request type: auxiliary requests sharing a session (title generation, quota probes, sub-agents) are no longer misreported as main-conversation drift. Up to four snapshots are kept per session and matched by shared system-block bytes; a request overlapping none of them is labelled a new request type",
+                    ),
+                    Bilingual::new(
+                        "首条消息、单条消息重发及 history[0] 重置轮次不再把尚未建立缓存的 system + tools 误计入缓存读取，报告的 cache_read 更贴近实际分母",
+                        "The first message of a window, single-message resends and turns that reset history[0] no longer count the not-yet-cached system + tools as cache reads, so reported cache_read better matches the real denominator",
+                    ),
+                    Bilingual::new(
+                        "使用日志新增缓存命中率胶囊，深度思考 Token 数改为琥珀色胶囊样式",
+                        "The usage log now shows a cache hit-rate pill, and the thinking token count uses an amber pill style",
+                    ),
+                ]),
+                fix_group(vec![Bilingual::new(
+                    "暂隐藏使用日志的缓存命中百分比胶囊：meteringEvent 不返回 cache_read 真值，命中率完全依赖 credits 反推，而反推在 credits 高于全未命中基线时被截断为 0%，会把缓存写入轮误显成 0%。口径校准前先隐藏，功能开关保留在代码中可随时恢复；缓存读取数字行不受影响",
+                    "Temporarily hide the cache hit-rate pill in the usage log: meteringEvent does not report cache_read, so the rate relies entirely on credit inference, which clamps to 0% whenever credits exceed the all-miss baseline and misrenders cache-write turns as 0%. Hidden until the metric is calibrated, with the switch kept in code for easy restore; the cache-read token row is unaffected",
+                )]),
+            ],
+        },
+        ReleaseNote {
+            version: "3.4.39".to_string(),
+            is_latest: false,
+            groups: vec![
+                feat_group(vec![
+                    Bilingual::new(
+                        "终端入口（cli）的思考文本由变暗改为变暗 + 斜体，与其他入口的引用块 + 斜体样式视觉一致；历史里旧版本渲染的变暗文本回传上游时仍会被整块剥离",
+                        "Thinking text in the terminal entry (cli) is now rendered dim + italic instead of dim only, matching the blockquote + italic style used by other entries; legacy dim-only text in client history is still stripped before being sent upstream",
+                    ),
+                    Bilingual::new(
+                        "Admin 模型页在模型 ID 下方展示上游返回的模型描述（悬停显示全文）；上游未返回时不渲染",
+                        "The Admin models page now shows the upstream model description under the model ID (full text on hover); nothing is rendered when upstream does not return one",
+                    ),
+                ]),
+                fix_group(vec![Bilingual::new(
+                    "修复 Claude Code 长会话中 credits 偏高的一个原因：CC 中途追加的“任务工具提醒”（The task tools haven't been used recently…）被并入 history[0]，每触发一次就使上游前缀缓存整段失效。现将其归入动态块，改放到当前消息开头，模型仍可见。新增 DEBUG 级漂移诊断日志（需开启 debugLogs）：缓存 key 变化时列出新增的系统块，便于定位其他类似提醒",
+                    "Fix one cause of inflated credits in long Claude Code sessions: the mid-session \"task tools haven't been used recently\" reminder was merged into history[0], invalidating the whole upstream prefix cache each time it fired. It is now treated as a dynamic block and moved to the start of the current message, so the model still sees it. Adds DEBUG-level drift diagnostics (requires debugLogs) that list newly added system blocks whenever the cache key changes, to help locate similar reminders",
+                )]),
+            ],
+        },
+        ReleaseNote {
+            version: "3.4.38".to_string(),
+            is_latest: false,
+            groups: vec![fix_group(vec![Bilingual::new(
+                "修复 Codex Desktop 通过 /v1/responses 接入时所有 MCP 工具和子代理工具都不可用的问题：此前只展开 functions 命名空间，其余 namespace 容器整体被丢弃；现在其子工具展开为 ns__叶子名 发给上游，并在响应里还原为 function_call 的 namespace + 叶子 name，历史回放同步使用同一命名规则；namespace 内的 custom 工具仍会被跳过。注意：被发送的工具数量增加，输入 token 会相应上升（#57）",
+                "Fix all MCP and sub-agent tools being unavailable when Codex Desktop connects via /v1/responses: only the functions namespace used to be expanded and every other namespace container was dropped. Their child tools are now flattened to ns__leaf for the upstream, restored to function_call namespace + leaf name in responses, and replayed history uses the same naming rule; custom tools inside a namespace are still skipped. Note: more tools are now sent, so input tokens increase accordingly (#57)",
+            )])],
+        },
+        ReleaseNote {
+            version: "3.4.37".to_string(),
+            is_latest: false,
+            groups: vec![
+                improve_group(vec![Bilingual::new(
+                    "思考文本化在非 cli 入口（Claude Desktop、local-agent 等）改用 Markdown 引用块 + 斜体来近似变暗，不含任何转义序列，避免出现 ESC 方块与字面 [2m/[0m（#54）；cli 入口仍使用 ANSI 变暗样式",
+                    "Thinking-as-text on non-cli entries (Claude Desktop, local-agent, etc.) now renders as a Markdown blockquote with italics to approximate dimming, with no escape sequences, avoiding ESC blocks and literal [2m/[0m (#54); the cli entry still uses ANSI dimming",
+                )]),
+                fix_group(vec![
+                    Bilingual::new(
+                        "修复 Claude Code 开启 advisor 后整个会话每次请求都返回 400 的问题：内联 system 消息中的 tool_addition / tool_removal 事件现在会被跳过，同条消息里的文本照常保留；type 为 advisor_* 的服务端工具不再作为普通工具转发给 Kiro（Kiro 无对应能力，本次仅做兼容降级，并不提供 advisor 功能本身）（#56）",
+                        "Fix HTTP 400 on every request once Claude Code enables advisor: tool_addition / tool_removal events in inline system messages are now skipped while text in the same message is kept, and server tools whose type starts with advisor_ are no longer forwarded to Kiro as ordinary tools (Kiro has no equivalent; this is a compatibility fallback only and does not provide advisor itself) (#56)",
+                    ),
+                    Bilingual::new(
+                        "修复历史回传时剥离思考文本过度的问题：只剥离渲染器补充的换行，降级路径（流被中断、缺少时长行）仅拆开头的引用段，避免误删正文",
+                        "Fix over-aggressive stripping of rendered thinking text in replayed history: only newlines added by the renderer are removed, and the fallback path (interrupted stream without a duration line) now unwraps only the leading quote run, so answer text is no longer clipped",
+                    ),
+                ]),
+            ],
+        },
+        ReleaseNote {
+            version: "3.4.36".to_string(),
+            is_latest: false,
+            groups: vec![fix_group(vec![
+                Bilingual::new(
+                    "修复 Claude Desktop Cowork 模式下思考内容出现 ESC 方块与字面 ANSI 转义序列（如 [2m/[0m）的格式异常：思考文本化输出改为仅 cli 入口（或解析不出入口的老格式 UA）使用 ANSI 变暗样式，Claude Desktop / local-agent / VS Code / SDK 等其余入口一律用纯文本，任何客户端下都不会乱码（#54）",
+                    "Fix garbled thinking content in Claude Desktop Cowork mode (ESC blocks and literal ANSI sequences like [2m/[0m): thinking-as-text output now applies ANSI dimming only for the cli entry (or legacy UAs without a parseable entry); all other entries — Claude Desktop / local-agent / VS Code / SDK — fall back to plain text, which renders correctly in every client (#54)",
+                ),
+                Bilingual::new(
+                    "修复管理面板账号详情、API Key 详情与失败/限流日志页滚动到底出现大块空白的问题：根容器改为确定高度 flex 布局，消除页面级与表格内层的双层滚动，页面级滚动归零后仅保留表格单层滚动",
+                    "Fix a large blank area when scrolling to the bottom of the account detail, API Key detail and failure/throttle log pages: the root container now uses a fixed-height flex layout, eliminating the dual page-level + table-level scrollbars so only the table scrolls internally",
+                ),
+            ])],
+        },
+        ReleaseNote {
+            version: "3.4.35".to_string(),
+            is_latest: false,
+            groups: vec![
+                feat_group(vec![Bilingual::new(
+                    "账号余额弹窗新增多时间窗使用统计：累计 / 今日 / 7 天 / 30 天四组统计卡片，各自展示请求数、输入输出 Tokens、花费与 Credits 消费；新增 /credentials/{id}/usage/today|7days|30days 端点，按 CST（UTC+8）自然日聚合，口径与累计统计一致（受明细缓冲裁剪约束）",
+                    "Multi-range usage stats in the account balance dialog: four stat card groups — total / today / 7 days / 30 days — each showing requests, input/output tokens, cost and credits consumption; backed by new /credentials/{id}/usage/today|7days|30days endpoints aggregated by CST (UTC+8) calendar day, same scope as the total stats (bounded by the retained-records cap)",
+                )]),
+                fix_group(vec![Bilingual::new(
+                    "i18n 英文文案润色：修正 20 余处不地道或歧义表述，包括批量操作文案缺失批量语义（Restore Failed Accounts、Batch Disable 等）、中式英语（Re-query → Refresh balance、Release to import → Drop the file to import、Real Credits → Actual Credits 等）与冠词、大小写细节",
+                    "i18n English copy polish: fixed 20+ non-idiomatic or ambiguous phrasings, including batch-action labels missing the batch semantic (Restore Failed Accounts, Batch Disable, etc.), unnatural wording (Re-query → Refresh balance, Release to import → Drop the file to import, Real Credits → Actual Credits, etc.) and article/capitalization details",
+                )]),
+            ],
+        },
+        ReleaseNote {
             version: "3.4.34".to_string(),
             is_latest: false,
             groups: vec![
