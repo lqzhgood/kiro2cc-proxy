@@ -25,6 +25,7 @@ description: 同步此 kiro2cc-proxy fork 的上游更新，适配并验证独�
 - 脚本输出单账户数组；Social 不带 IdC client 字段，IdC 同时带 clientId/clientSecret；保留 email/profileArn/authRegion/apiRegion/machineId。禁用创建、验活后启用；重复账户跳过；验活或启用失败不得误报为创建失败并自动重复创建。
 - 仅弹窗打开时监听 focus/visibility，仅空框和合法 JSON 自动填入；异步读取不得覆盖用户输入或污染下次弹窗。拒绝后停止自动重试，保留主动粘贴和手动输入。确定按钮是唯一提交入口，关闭清空凭据。
 - `scripts/fork/get-kiro-info.sh` 目前仅 macOS。末尾显示完整 JSON；真实复制成功才显示成功，失败明确提示手动复制。外部下载地址的发布独立进行，本地修改不意味着线上已更新。
+- 管理端侧边栏页脚（左下角）的 GitHub 链接固定为 fork 仓库 `https://github.com/lqzhgood/kiro2cc-proxy`，位于 `web-ui/admin-ui/src/components/dashboard/sidebar.tsx` 页脚版本号 `<a href>`（约在「页脚（设计稿 .side-foot）：运行状态点 + 版本号 + 退出登录」注释下方）。上游该位置是 `TsinHzl/kiro2cc-proxy`，合并时上游改动可能把它改回；每次同步都须检查并恢复为 fork 地址。该文件其余位置（顶部 logo 链接、`dashboard/docs-page.tsx`、`hooks/use-credentials.ts` 的更新检查与 release/tags 查询）按上游原样保留，不随此项改写；README 徽章与链接同理不动。
 
 ## 验证与交付
 
@@ -33,5 +34,6 @@ description: 同步此 kiro2cc-proxy fork 的上游更新，适配并验证独�
 若上游改变相关后端路径，补跑受影响的 Rust 检查和仓库要求的检查；读 `.github/workflows/test.yaml` 核对当前上游命令。接口变化时同时更新合约断言和 mock，并核对实际后端请求类型或反序列化验证；新增必填字段必须确认来源和默认值，不能猜造字段值或仅凭旧 mock 通过就认定兼容。环境缺失时完成能运行的部分，准确报告未验证项，不能将跳过写成通过。
 
 审查完整 diff，确保上游功能没有被定制代码回退。只提交此次同步与适配文件；按用户授权处理提交，不自动 push、发布脚本或部署服务。
+交付前确认侧边栏页脚链接仍为 `https://github.com/lqzhgood/kiro2cc-proxy`（例如在 `sidebar.tsx` 中检索页脚版本号 `<a>` 的 href）；被上游覆盖时在同步提交内一并修复。
 
 报告同步前后 SHA、上游版本、适配位置、测试结果、未解决问题和回滚点。失败时保留可审查状态，不宣称成功；不要承诺未来无冲突。

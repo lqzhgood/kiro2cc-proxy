@@ -192,9 +192,11 @@ export function Sidebar({
             className={`h-1.5 w-1.5 shrink-0 rounded-full ring-[3px] ${serverHealthy ? 'bg-ok ring-ok-soft' : 'bg-ink-3 ring-surface-3'}`}
           />
           {/* 加载中 / 请求失败时连同版本号一并隐藏，只留灰点，避免展示 `v...` 这类无效版本 */}
+          {/* fork 定制：页脚版本链接指向本 fork 仓库；上游同步时须保留，
+              不要被上游的 TsinHzl 地址覆盖（见 .agents/skills/kiro-upstream-sync/SKILL.md） */}
           {!sidebarContentCollapsed && serverHealthy && (
             <a
-              href="https://github.com/TsinHzl/kiro2cc-proxy"
+              href="https://github.com/lqzhgood/kiro2cc-proxy"
               target="_blank"
               rel="noopener noreferrer"
               className="truncate text-[10.5px] text-ink-3 hover:text-brand transition-colors"
