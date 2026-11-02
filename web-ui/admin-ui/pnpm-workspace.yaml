@@ -1,5 +1,5 @@
 ﻿# pnpm 工作区配置（单包）。必须显式声明 packages：pnpm 9 缺少该字段会报
-# 「packages field missing or empty」，而 pnpm 10+ 只从本文件读取构建脚本许可。
+# 「packages field missing or empty」；pnpm 11 起不再读取 package.json 的 pnpm 字段。
 packages:
   - .
 
