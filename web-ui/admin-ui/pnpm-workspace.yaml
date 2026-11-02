@@ -1,0 +1,15 @@
+﻿# pnpm 工作区配置（单包）。必须显式声明 packages：pnpm 9 缺少该字段会报
+# 「packages field missing or empty」，而 pnpm 10+ 只从本文件读取构建脚本许可。
+packages:
+  - .
+
+# 允许这些依赖执行安装脚本（esbuild/@swc/core 需要 postinstall 下载原生二进制）。
+# pnpm 10+ 默认拒绝，未列出会以 ERR_PNPM_IGNORED_BUILDS 退出。
+allowBuilds:
+  '@swc/core': true
+  esbuild: true
+
+# 兼容 pnpm 9/10 读取的白名单写法，避免旧版本在未知字段下退化。
+onlyBuiltDependencies:
+  - '@swc/core'
+  - esbuild
