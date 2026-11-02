@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Harllan He. Licensed under MIT.
 import { useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
+import { toast } from '@/lib/toast'
 import { ChevronDown, RotateCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Metric, MetricValue, MetricsBar } from '@/components/metrics'
@@ -119,9 +119,6 @@ export function ApiKeyDetailPage({ keyId, onBack }: ApiKeyDetailPageProps) {
         <Metric label={t('apiKeys.colOutputTokens')}>
           <MetricValue value={formatTokenCount(summary?.totalOutputTokens ?? 0)} />
         </Metric>
-        <Metric label={t('apiKeys.totalCostLabel')}>
-          <MetricValue value={formatCost(summary?.totalCost ?? 0)} />
-        </Metric>
         <Metric label={t('apiKeys.totalCreditsLabel')}>
           <MetricValue
             value={fallbackCredits(summary?.totalCost ?? 0).toFixed(4)}
@@ -134,6 +131,9 @@ export function ApiKeyDetailPage({ keyId, onBack }: ApiKeyDetailPageProps) {
               ) : undefined
             }
           />
+        </Metric>
+        <Metric label={t('apiKeys.totalCostLabel')}>
+          <MetricValue value={formatCost(summary?.totalCost ?? 0)} />
         </Metric>
       </MetricsBar>
 

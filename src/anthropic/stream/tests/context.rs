@@ -267,9 +267,15 @@ mod tests {
 
             // 模拟 346 tokens 输出（BPE 8 个 'a' 合并 1 token，2768 = 346）与部分缓存失效的 meteringEvent
             ctx.output_full_text = "a".repeat(346 * 8);
+            let credits = crate::model::usage::credits_for_cache_read(
+                "claude-haiku-5-5",
+                53_776,
+                346,
+                21_000,
+            );
             let metering_event = crate::kiro::model::events::Event::Metering(
                 crate::kiro::model::events::MeteringEvent {
-                    usage: 0.06617,
+                    usage: credits,
                     unit_plural: "credits".to_string(),
                     unit: String::new(),
                     cache_read_input_tokens: None,
@@ -300,9 +306,12 @@ mod tests {
             if continued {
                 assert_eq!(recorded_read, 53_650);
             } else {
-                assert!((20_000..=22_500).contains(&recorded_read));
+                assert!(
+                    (20_999..=21_001).contains(&recorded_read),
+                    "{recorded_read}"
+                );
             }
-            assert_eq!(page.records[0].credits_used, Some(0.06617));
+            assert_eq!(page.records[0].credits_used, Some(credits));
 
             // 2. 末尾 message_delta 保持静态前缀口径，与 message_start 一致
             let delta_evt = final_events
@@ -382,5 +391,288 @@ mod tests {
             );
             accounting.commit();
         }
+    }
+
+    // ===== credits 汇总行（showSessionCredits）=====
+
+    use crate::anthropic::stream::{CreditsFooterRequest, ThinkingTextStyle};
+    use crate::kiro::model::events::{AssistantResponseEvent, Event, MeteringEvent, ToolUseEvent};
+
+    fn text_event(content: &str) -> Event {
+        Event::AssistantResponse(
+            serde_json::from_value::<AssistantResponseEvent>(serde_json::json!({
+                "content": content
+            }))
+            .unwrap(),
+        )
+    }
+
+    fn metering_event(usage: f64) -> Event {
+        Event::Metering(MeteringEvent {
+            usage,
+            unit_plural: "credits".to_string(),
+            unit: String::new(),
+            cache_read_input_tokens: None,
+            cache_creation_input_tokens: None,
+        })
+    }
+
+    /// 取出事件序列里所有 text_delta 拼接后的文本
+    fn collect_text(events: &[crate::anthropic::stream::SseEvent]) -> String {
+        events
+            .iter()
+            .filter(|e| e.event == "content_block_delta")
+            .filter_map(|e| e.data["delta"]["text"].as_str())
+            .collect()
+    }
+
+    fn make_ctx(conv: &str, footer: Option<CreditsFooterRequest>) -> StreamContext {
+        let mut ctx = StreamContext::new_with_thinking("test-model", 10, false)
+            .with_conversation_id(Some(conv.to_string()))
+            .with_credits_footer(footer, std::time::Instant::now());
+        let _ = ctx.generate_initial_events();
+        ctx
+    }
+
+    fn request(new_turn: bool) -> Option<CreditsFooterRequest> {
+        Some(CreditsFooterRequest {
+            style: ThinkingTextStyle::Ansi,
+            new_turn,
+            chain: 1,
+        })
+    }
+
+    #[test]
+    fn test_credits_footer_appended_on_end_turn() {
+        let mut ctx = make_ctx("ctx-footer-end", request(true));
+        let mut out = ctx.process_kiro_event(&text_event("完成了"));
+        ctx.process_kiro_event(&metering_event(0.86));
+        out.extend(ctx.generate_final_events());
+
+        let text = collect_text(&out);
+        assert!(text.starts_with("完成了\n\n"), "text={text:?}");
+        assert!(
+            text.contains("▸ Credits: turn 0.86 • session 0.86 | Time: "),
+            "text={text:?}"
+        );
+        // 汇总行是最后一个文本增量，位于 message_delta 之前
+        let last_text = out
+            .iter()
+            .rposition(|e| e.event == "content_block_delta")
+            .unwrap();
+        let msg_delta = out.iter().position(|e| e.event == "message_delta").unwrap();
+        assert!(last_text < msg_delta);
+    }
+
+    #[test]
+    fn test_credits_footer_not_counted_as_model_output() {
+        let mut with_footer = make_ctx("ctx-footer-tokens-a", request(true));
+        with_footer.process_kiro_event(&text_event("完成了"));
+        with_footer.process_kiro_event(&metering_event(0.5));
+        let before = with_footer.visible_output_tokens();
+        let _ = with_footer.generate_final_events();
+        assert_eq!(with_footer.visible_output_tokens(), before);
+        assert_eq!(with_footer.visible_full_text, "完成了");
+    }
+
+    #[test]
+    fn test_credits_footer_skipped_on_tool_use_but_still_accumulates() {
+        let conv = "ctx-footer-tool-loop";
+        // 第 1 个请求：以 tool_use 结束，不输出汇总行，但 credits 计入 turn / session
+        let mut first = make_ctx(conv, request(true));
+        first.process_kiro_event(&text_event("我先看一下"));
+        first.process_tool_use(&ToolUseEvent {
+            name: "Bash".to_string(),
+            tool_use_id: "toolu_1".to_string(),
+            input: "{}".to_string(),
+            stop: true,
+        });
+        first.process_kiro_event(&metering_event(0.25));
+        let out = first.generate_final_events();
+        assert!(!collect_text(&out).contains("Credits:"));
+
+        // 第 2 个请求：工具结果回传（同一轮），以 end_turn 结束，turn 累加两次请求
+        let mut second = make_ctx(conv, request(false));
+        let mut out = second.process_kiro_event(&text_event("搞定"));
+        second.process_kiro_event(&metering_event(0.5));
+        out.extend(second.generate_final_events());
+        assert!(
+            collect_text(&out).contains("turn 0.75 • session 0.75"),
+            "text={:?}",
+            collect_text(&out)
+        );
+
+        // 第 3 个请求：用户新一轮，turn 清零，session 继续累计
+        let mut third = make_ctx(conv, request(true));
+        let mut out = third.process_kiro_event(&text_event("好的"));
+        third.process_kiro_event(&metering_event(1.0));
+        out.extend(third.generate_final_events());
+        assert!(
+            collect_text(&out).contains("turn 1.00 • session 1.75"),
+            "text={:?}",
+            collect_text(&out)
+        );
+    }
+
+    #[test]
+    fn test_end_turn_without_metering_still_closes_turn() {
+        let conv = "ctx-footer-close-without-metering";
+        // 主对话以 end_turn 结束但上游没有 metering：不输出汇总行，turn 仍须关闭
+        let mut first = make_ctx(conv, request(true));
+        let mut out = first.process_kiro_event(&text_event("完成了"));
+        out.extend(first.generate_final_events());
+        assert_eq!(collect_text(&out), "完成了");
+
+        // 换链的新请求（如 /compact 改写首条消息）不应被误判为子代理，应正常输出汇总行
+        let other_chain = Some(CreditsFooterRequest {
+            style: ThinkingTextStyle::Ansi,
+            new_turn: true,
+            chain: 2,
+        });
+        let mut second = make_ctx(conv, other_chain);
+        let mut out = second.process_kiro_event(&text_event("好的"));
+        second.process_kiro_event(&metering_event(0.5));
+        out.extend(second.generate_final_events());
+        assert!(
+            collect_text(&out).contains("turn 0.50 • session 0.50"),
+            "text={:?}",
+            collect_text(&out)
+        );
+    }
+
+    #[test]
+    fn test_credits_footer_disabled_or_without_metering_adds_nothing() {
+        // 未开启
+        let mut off = make_ctx("ctx-footer-off", None);
+        let mut out = off.process_kiro_event(&text_event("hi"));
+        off.process_kiro_event(&metering_event(0.5));
+        out.extend(off.generate_final_events());
+        assert_eq!(collect_text(&out), "hi");
+
+        // 开启但上游没有 metering：没有可累计的数据，不输出
+        let mut no_metering = make_ctx("ctx-footer-no-metering", request(true));
+        let mut out = no_metering.process_kiro_event(&text_event("hi"));
+        out.extend(no_metering.generate_final_events());
+        assert_eq!(collect_text(&out), "hi");
+
+        // 开启但没有 conversationId：无法按会话累计，不输出
+        let mut no_conv = StreamContext::new_with_thinking("test-model", 10, false)
+            .with_credits_footer(request(true), std::time::Instant::now());
+        let _ = no_conv.generate_initial_events();
+        let mut out = no_conv.process_kiro_event(&text_event("hi"));
+        no_conv.process_kiro_event(&metering_event(0.5));
+        out.extend(no_conv.generate_final_events());
+        assert_eq!(collect_text(&out), "hi");
+    }
+
+    #[test]
+    fn test_credits_footer_subagent_merges_into_main_turn_without_footer() {
+        let conv = "ctx-footer-subagent";
+        let chain = |new_turn: bool, chain: u64| {
+            Some(CreditsFooterRequest {
+                style: ThinkingTextStyle::Ansi,
+                new_turn,
+                chain,
+            })
+        };
+
+        // 主对话先以 tool_use 结束（调用 Task 工具）
+        let mut main1 = make_ctx(conv, chain(true, 1));
+        main1.process_kiro_event(&text_event("派个子代理"));
+        main1.process_tool_use(&ToolUseEvent {
+            name: "Task".to_string(),
+            tool_use_id: "toolu_1".to_string(),
+            input: "{}".to_string(),
+            stop: true,
+        });
+        main1.process_kiro_event(&metering_event(0.25));
+        let _ = main1.generate_final_events();
+
+        // 子代理以 end_turn 结束：记账但不输出汇总行
+        let mut sub = make_ctx(conv, chain(true, 2));
+        let mut out = sub.process_kiro_event(&text_event("子代理结果"));
+        sub.process_kiro_event(&metering_event(0.5));
+        out.extend(sub.generate_final_events());
+        assert_eq!(collect_text(&out), "子代理结果");
+
+        // 主对话收到工具结果后 end_turn：turn 含子代理的消耗
+        let mut main2 = make_ctx(conv, chain(false, 1));
+        let mut out = main2.process_kiro_event(&text_event("汇总完毕"));
+        main2.process_kiro_event(&metering_event(0.25));
+        out.extend(main2.generate_final_events());
+        assert!(
+            collect_text(&out).contains("turn 1.00 • session 1.00"),
+            "text={:?}",
+            collect_text(&out)
+        );
+    }
+
+    #[test]
+    fn test_credits_footer_stop_hook_continuation_stays_in_same_turn() {
+        let conv = "ctx-footer-stop-hook";
+        // 用户发消息，模型调用工具后以 end_turn 收尾（此时输出的汇总行只含已发生的部分）
+        let mut first = make_ctx(conv, request(true));
+        first.process_kiro_event(&text_event("改好了"));
+        first.process_kiro_event(&metering_event(0.5));
+        let out = first.generate_final_events();
+        assert!(collect_text(&out).contains("turn 0.50 • session 0.50"));
+
+        // Stop hook 拦截收尾，Claude Code 在同一轮里带着 hook 反馈再次请求（new_turn = false）：
+        // turn 必须接着前面累计，而不是从零开始
+        let mut second = make_ctx(conv, request(false));
+        let mut out = second.process_kiro_event(&text_event("是否执行 Code Review？"));
+        second.process_kiro_event(&metering_event(0.25));
+        out.extend(second.generate_final_events());
+        assert!(
+            collect_text(&out).contains("turn 0.75 • session 0.75"),
+            "text={:?}",
+            collect_text(&out)
+        );
+    }
+
+    #[test]
+    fn test_credits_footer_plain_style_has_no_escape_codes() {
+        let mut ctx = make_ctx(
+            "ctx-footer-plain",
+            Some(CreditsFooterRequest {
+                style: ThinkingTextStyle::Plain,
+                new_turn: true,
+                chain: 1,
+            }),
+        );
+        let mut out = ctx.process_kiro_event(&text_event("done"));
+        ctx.process_kiro_event(&metering_event(0.1));
+        out.extend(ctx.generate_final_events());
+        let text = collect_text(&out);
+        assert!(!text.contains('\x1b'), "text={text:?}");
+        assert!(text.contains("*▸ Credits: turn 0.10"), "text={text:?}");
+    }
+
+    #[test]
+    fn test_credits_footer_repeated_finalize_records_once() {
+        let conv = "ctx-footer-idempotent";
+        let mut ctx = make_ctx(conv, request(true));
+        let mut out = ctx.process_kiro_event(&text_event("done"));
+        ctx.process_kiro_event(&metering_event(0.5));
+        out.extend(ctx.generate_final_events());
+        // 桥接兜底路径再次收尾：不得再记账，也不得再追加汇总行
+        let repeated = ctx.generate_final_events();
+        assert!(
+            collect_text(&repeated).is_empty(),
+            "{:?}",
+            collect_text(&repeated)
+        );
+        assert_eq!(collect_text(&out).matches("Credits:").count(), 1);
+
+        // 下一个请求的 session 只含一次 0.5，而不是 1.0
+        let mut next = make_ctx(conv, request(false));
+        let mut out = next.process_kiro_event(&text_event("again"));
+        next.process_kiro_event(&metering_event(0.25));
+        out.extend(next.generate_final_events());
+        assert!(
+            collect_text(&out).contains("session 0.75"),
+            "text={:?}",
+            collect_text(&out)
+        );
     }
 }

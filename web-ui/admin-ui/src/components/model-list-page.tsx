@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Harllan He. Licensed under MIT.
 import { Fragment, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
+import { toast } from '@/lib/toast'
 import { Boxes, Copy, Download, Loader2, RotateCw, SearchX } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { FootSep, Metric, MetricFoot, MetricValue, MetricsBar } from '@/components/metrics'
@@ -175,7 +175,7 @@ export function ModelListPage() {
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div className="flex h-[calc(100vh-56px)] min-h-[480px] flex-col">
       <PageHead
         crumb={[t('dashboard.navMain'), t('models.pageTitle')]}
         title={t('models.pageTitle')}

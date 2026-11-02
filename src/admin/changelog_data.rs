@@ -67,6 +67,80 @@ const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub fn build_release_notes() -> Vec<ReleaseNote> {
     let mut notes = vec![
         ReleaseNote {
+            version: "3.4.45".to_string(),
+            is_latest: false,
+            groups: vec![
+                feat_group(vec![Bilingual::new(
+                    "新增 [prefix-drift] / [prefix-shrink] 诊断日志：对比同会话相邻两次请求的 tools 与 history[1..] 指纹，定位前缀从第几条消息起发生变化，用于区分前缀改动与上游缓存丢失",
+                    "Added [prefix-drift] / [prefix-shrink] diagnostics: tools and history[1..] fingerprints are compared between consecutive requests in a session to pinpoint the first message where the prefix changed, telling prefix edits apart from upstream cache loss",
+                )]),
+                improve_group(vec![
+                    Bilingual::new(
+                        "36 套主题的文字与背景对比度统一提升到 WCAG AA（4.5:1），主题设置页实时预览的文字按实际底色计算可读色",
+                        "Text-to-background contrast across all 36 themes now meets WCAG AA (4.5:1), and the live preview on the theme settings page picks a readable text color from the actual background",
+                    ),
+                    Bilingual::new(
+                        "普通提示 toast 显示时长缩短到 2 秒；错误提示延长到 5 秒，带操作按钮的提示为 6 秒，留出阅读和点击时间",
+                        "Regular toasts now dismiss after 2 seconds; error toasts stay for 5 seconds and toasts with an action button for 6 seconds, leaving time to read and click",
+                    ),
+                    Bilingual::new(
+                        "从侧栏其他页面切回账号管理页时，刷新内容与浏览器标签页切回前台保持一致",
+                        "Switching back to the account manager from another sidebar page now refreshes the same data as returning to the browser tab",
+                    ),
+                    Bilingual::new(
+                        "支持模型页改为固定视口高度，模型表在框内滚动；按模型分组的折叠标题仅箭头和文字可点击",
+                        "The supported-models page now has a fixed viewport height with the table scrolling inside its frame; per-model group headers toggle only from the arrow and label",
+                    ),
+                ]),
+                fix_group(vec![
+                    Bilingual::new(
+                        "缓存读取反推改用全部 Claude 模型的受控实测费率（未缓存 / 缓存 / 输出三项），修复 Sonnet 5.5 等模型缓存读取几乎恒为 0；未实测模型跳过反推、保留前缀估算",
+                        "Cache-read inference now uses measured rates (uncached / cached / output) for every Claude model, fixing cache reads that were almost always 0 on Sonnet 5.5 and others; unmeasured models skip inference and keep the prefix estimate",
+                    ),
+                    Bilingual::new(
+                        "基线表淘汰改为优先保留被反复匹配的主对话基线，避免子代理连续登记新基线把主对话基线挤出，导致上游前缀缓存整段失效",
+                        "Baseline eviction now favours main-conversation baselines that keep getting matched, so bursts of sub-agent baselines no longer push them out and invalidate the whole upstream prefix cache",
+                    ),
+                ]),
+            ],
+        },
+        ReleaseNote {
+            version: "3.4.43".to_string(),
+            is_latest: false,
+            groups: vec![feat_group(vec![
+                Bilingual::new(
+                    "聊天回复末尾新增 turn/session credits 展示（showSessionCredits）：对话结束时把本次所耗与累计的 credits 一并呈现给用户",
+                    "The end of a chat reply now shows turn/session credits (showSessionCredits): on conversation end the credits consumed this turn and the running session total are presented to the user",
+                ),
+                Bilingual::new(
+                    "管理端弹窗与下拉菜单增加进出场动画，交互过渡更平滑",
+                    "The admin-side dialogs and dropdown menus now animate on open and close, making transitions smoother",
+                ),
+            ])],
+        },
+        ReleaseNote {
+            version: "3.4.42".to_string(),
+            is_latest: false,
+            groups: vec![feat_group(vec![Bilingual::new(
+                "账号管理与使用日志页切回浏览器标签页时自动刷新数据，避免长时间停留在页面后展示过期状态",
+                "The account-manager and usage-log pages now auto-refresh their data when the browser tab regains focus, so stale state is not shown after the page has been idle",
+            )])],
+        },
+        ReleaseNote {
+            version: "3.4.41".to_string(),
+            is_latest: false,
+            groups: vec![
+                feat_group(vec![Bilingual::new(
+                    "设置页「Kiro 请求体落盘取证」新增网页端浏览与下载：管理员可在弹窗中列出落盘文件、逐个下载或一键打包 ZIP 下载，容器化部署无需再通过 SSH / docker cp 取回；下载走 x-api-key 头鉴权，凭据不进查询参数。同时收紧了落盘文件的清理判据（仅识别规范命名的 dump 文件，手工放入的其他 json 不再被计数或删除）并为写入加锁，修复并发写入可能超出 200 个上限的竞态",
+                    "The Kiro request-body dump setting now offers in-browser browsing and download: admins can list dump files in a dialog, download them one by one or as a single ZIP, with no need for SSH / docker cp in containerised deployments. Downloads authenticate with the x-api-key header, so credentials never appear in query strings. The cleanup predicate is also tightened (only well-formed dump file names are recognised; hand-placed json files are no longer counted or deleted) and writes are serialised, fixing a race where concurrent writes could exceed the 200-file cap",
+                )]),
+                fix_group(vec![Bilingual::new(
+                    "修复编辑账号时 Client Secret 被浏览器自动填充的管理密码覆盖（#58）：登录页保存的管理密码会被填进弹窗里的 password 框，保存后被当作 clientSecret 写入，要等 token 到期刷新才报 invalid_client 并被禁用，且管理密码会随刷新请求发往 AWS。现在 password 输入框默认禁用浏览器与 1Password / LastPass / Bitwarden 的自动填充；后端在 clientId 或 IdC 账号的 clientSecret 改为非空新值时，先用更新后的配置（含同次提交的代理与区域）试刷新，失败则拒绝保存；更新日志记录涉及的字段名（不含值）。已被覆盖的账号需重新填入真实的 clientSecret",
+                    "Fixed the Client Secret being overwritten by a browser-autofilled admin password when editing an account (#58): the admin password saved from the login page was autofilled into password fields in the dialog and saved as clientSecret, only surfacing as invalid_client at the next token refresh (after which the account was disabled), and the admin password would be sent to AWS with each refresh. Password inputs now opt out of browser and 1Password / LastPass / Bitwarden autofill by default; when clientId, or clientSecret on an IdC account, is changed to a non-empty value the backend first trial-refreshes with the updated configuration (including a proxy or region changed in the same request) and rejects the save on failure; the update log now records the names of the fields involved (never values). Accounts already overwritten need their real clientSecret entered again",
+                )]),
+            ],
+        },
+        ReleaseNote {
             version: "3.4.40".to_string(),
             is_latest: false,
             groups: vec![

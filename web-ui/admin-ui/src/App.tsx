@@ -4,6 +4,7 @@ import { storage } from '@/lib/storage'
 import { LoginPage } from '@/components/login-page'
 import { Dashboard } from '@/components/dashboard'
 import { Toaster } from '@/components/ui/sonner'
+import { ConfirmDialogHost } from '@/components/ui/confirm-dialog'
 
 function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false)
@@ -30,7 +31,8 @@ function App() {
       ) : (
         <LoginPage onLogin={handleLogin} />
       )}
-      <Toaster position="top-right" />
+      <ConfirmDialogHost />
+      <Toaster position="top-right" duration={2000} />
     </>
   )
 }

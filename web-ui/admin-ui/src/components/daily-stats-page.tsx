@@ -2,7 +2,7 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useQueryClient } from '@tanstack/react-query'
-import { toast } from 'sonner'
+import { toast } from '@/lib/toast'
 import { BarChart3, CalendarDays, RotateCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { CustomRangeDialog, RANGE_DAYS, UsageMetricsBar, cstDateString, type CustomRange } from '@/components/daily-shared'
@@ -94,7 +94,7 @@ export function DailyStatsPage({
   }
 
   return (
-    <div className="flex min-h-0 flex-col">
+    <div className="flex h-[calc(100vh-56px)] min-h-[480px] flex-col">
       <PageHead
         crumb={[t('dashboard.navMain'), t('dailyStats.pageTitle')]}
         title={t('dailyStats.pageTitle')}
@@ -216,7 +216,7 @@ function TodayRecordsView({ daily, dailyLoading, dailyError }: DailyTotalsProps)
   const geoMap = useIpGeo(pageIps)
 
   return (
-    <div className="flex min-h-[calc(100vh-56px)] flex-col">
+    <div className="flex min-h-0 flex-1 flex-col">
       <UsageMetricsBar
         daily={daily}
         from={todayCst}
@@ -236,7 +236,7 @@ function TodayRecordsView({ daily, dailyLoading, dailyError }: DailyTotalsProps)
       <div className="mt-[15px] flex min-h-0 flex-1 flex-col">
         <h3 className={PANEL_TITLE}>{t('common.requestLog')}</h3>
         <section className={`${PANEL} flex min-h-0 flex-1 flex-col`}>
-          <div className="min-h-0 flex-1 overflow-y-auto">
+          <div className="relative min-h-0 flex-1 overflow-y-auto">
             {isError ? (
               <div className="px-4 py-12 text-center text-[12.5px] text-ink-3">
                 {t('common.loadFailed')}
@@ -303,7 +303,7 @@ function CustomRangeRecordsView({
   const geoMap = useIpGeo(pageIps)
 
   return (
-    <div className="flex min-h-[calc(100vh-56px)] flex-col">
+    <div className="flex min-h-0 flex-1 flex-col">
       <UsageMetricsBar
         daily={daily}
         from={range.from}
@@ -332,7 +332,7 @@ function CustomRangeRecordsView({
           </div>
         </div>
         <section className={`${PANEL} flex min-h-0 flex-1 flex-col`}>
-          <div className="min-h-0 flex-1 overflow-y-auto">
+          <div className="relative min-h-0 flex-1 overflow-y-auto">
             {isError ? (
               <div className="px-4 py-12 text-center text-[12.5px] text-ink-3">
                 {t('common.loadFailed')}

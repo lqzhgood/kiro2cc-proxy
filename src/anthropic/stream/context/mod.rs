@@ -103,6 +103,12 @@ pub struct StreamContext {
     pub(crate) first_token_at: Option<Instant>,
     /// 会话 conversationId（cache-miss 诊断按会话计算结算间隔与凭据变化）
     conversation_id: Option<String>,
+    /// 会话结束时追加 credits 汇总行（None = 关闭）
+    credits_footer: Option<crate::anthropic::stream::CreditsFooterRequest>,
+    /// 本请求的 credits 是否已计入会话累计（重复收尾不得重复记账、重复追加汇总行）
+    credits_recorded: bool,
+    /// 本请求是子代理请求：credits 计入主对话 turn，但不输出汇总行
+    credits_is_sub: bool,
 }
 
 impl StreamContext {
@@ -151,6 +157,9 @@ impl StreamContext {
             request_started_at: None,
             first_token_at: None,
             conversation_id: None,
+            credits_footer: None,
+            credits_recorded: false,
+            credits_is_sub: false,
         }
     }
 
@@ -163,6 +172,21 @@ impl StreamContext {
     /// 注入会话 conversationId（cache-miss 诊断按会话计算结算间隔与凭据变化）
     pub fn with_conversation_id(mut self, conversation_id: Option<String>) -> Self {
         self.conversation_id = conversation_id;
+        self
+    }
+
+    /// 开启会话结束时的 credits 汇总行；需要已注入 conversationId（用于按会话累计）。
+    /// 同时登记本请求的开始，新一轮会清零 turn 累计并以 `started_at` 作为 Time 起点。
+    pub fn with_credits_footer(
+        mut self,
+        request: Option<crate::anthropic::stream::CreditsFooterRequest>,
+        started_at: Instant,
+    ) -> Self {
+        if let (Some(req), Some(conv)) = (request, self.conversation_id.as_deref()) {
+            self.credits_is_sub =
+                crate::anthropic::stream::begin_request(conv, req.chain, req.new_turn, started_at);
+            self.credits_footer = Some(req);
+        }
         self
     }
 
@@ -690,6 +714,47 @@ impl StreamContext {
         events
     }
 
+    /// credits 汇总行：登记本请求的 credits，并在对话真正结束（end_turn）时把累计值
+    /// 作为最后一行文本追加到回复末尾。
+    ///
+    /// - 每个带 metering 的请求都计入 turn / session 累计，包括以 tool_use 结束的中间请求；
+    ///   只有 end_turn 且已有可见正文时才输出汇总行
+    /// - 子代理请求（主对话 turn 进行中的陌生请求链）只记账，不输出汇总行，也不结束主对话的 turn
+    /// - 汇总行不计入 `visible_full_text`：它不是模型输出，不能进入 output_tokens 上报与计费口径
+    fn credits_footer_events(&mut self) -> Vec<SseEvent> {
+        let (Some(footer), Some(conv)) = (self.credits_footer, self.conversation_id.as_deref())
+        else {
+            return Vec::new();
+        };
+        let end_turn = self.state_manager.get_stop_reason() == "end_turn";
+        // turn 的生命周期与记账解耦：上游没返回 meteringEvent 的 end_turn 也要关闭 turn，
+        // 否则 turn_open 残留，之后换链的请求（/compact 等）会被误判为子代理（finish_turn 幂等）
+        if end_turn && !self.credits_is_sub {
+            crate::anthropic::stream::finish_turn(conv);
+        }
+        let Some(credits) = self.metering_usage else {
+            return Vec::new();
+        };
+        // 与 message_ended 同口径：桥接兜底路径可能再次收尾，只记账一次
+        if self.credits_recorded {
+            return Vec::new();
+        }
+        self.credits_recorded = true;
+        let snapshot = crate::anthropic::stream::record_credits(conv, credits);
+        if self.credits_is_sub || !end_turn || self.visible_full_text.is_empty() {
+            return Vec::new();
+        }
+        let text = crate::anthropic::stream::render_footer(
+            &snapshot,
+            footer.style,
+            &self.visible_full_text,
+        );
+        let visible_len = self.visible_full_text.len();
+        let events = self.create_text_delta_events(&text);
+        self.visible_full_text.truncate(visible_len);
+        events
+    }
+
     /// 客户端可见 thinking 文案入缓存（落库 thinking_token_count 统计口径）；
     /// 空串跳过（content_block_stop 前的收尾空事件不计数）。
     /// 流式两条发射路径（标签解析 / native reasoning）统一经此收敛，防第三发射点遗漏。
@@ -928,6 +993,8 @@ impl StreamContext {
             self.state_manager.set_stop_reason("max_tokens");
             events.extend(self.create_text_delta_events(" "));
         }
+
+        events.extend(self.credits_footer_events());
 
         // contextUsage 本地化：input_tokens 来源改为 metering 真值 → 本地估算（self.input_tokens）
         // self.context_input_tokens 已弃用（始终为 None），保留诊断字段

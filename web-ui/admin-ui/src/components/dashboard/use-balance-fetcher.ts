@@ -140,41 +140,50 @@ export function useBalanceFetcher({
     prevDailyView.current = dailyView
   }, [detailCredentialId, dailyView]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 切换到凭据管理页时静默刷新所有余额
+  // 静默逐个刷新所有启用账号的余额（切回凭据 tab、浏览器标签页切回前台共用）
+  const refreshAllBalances = () => {
+    const ids = (credentialsRef.current || []).filter(c => !c.disabled).map(c => c.id)
+    if (ids.length === 0) return
+    isFetchingBalances.current = true
+    ;(async () => {
+      let runningTotal = 0
+      let queried = 0
+      setLiveCreditsTotal(0)
+      setLiveCreditsQueried(0)
+      for (const id of ids) {
+        setLoadingBalanceIds(prev => { const next = new Set(prev); next.add(id); return next })
+        try {
+          const balance = await getCredentialBalance(id)
+          runningTotal += balance.remaining
+          setBalanceMap(prev => { const next = new Map(prev); next.set(id, balance); return next })
+          setLiveCreditsTotal(runningTotal)
+        } catch (_) {
+          // 静默失败
+        } finally {
+          setLoadingBalanceIds(prev => { const next = new Set(prev); next.delete(id); return next })
+          setLiveCreditsQueried(++queried)
+        }
+      }
+      await patchMissedCredentials(new Set(ids))
+      isFetchingBalances.current = false
+      // 拉取期间账号可能被禁用：强制重算一次，按最新禁用态修正过渡展示值
+      setBalanceMap(prev => new Map(prev))
+    })()
+  }
+
+  // 浏览器标签页切回前台、侧栏切到账号管理页共用：账号列表 + 每日统计 + 全部余额。
+  // 手动刷新 / 首次加载 / 上一轮静默刷新仍在拉余额时（isFetchingBalances）跳过余额部分，避免两个循环并发
+  const refreshOnReturn = () => {
+    refetch()
+    queryClient.invalidateQueries({ queryKey: ['dailyUsage'] })
+    if (isFetchingBalances.current) return
+    refreshAllBalances()
+  }
+
+  // 侧栏切到账号管理页时，与浏览器切回前台走同一套刷新
   useEffect(() => {
     if (prevTabRef.current !== null && prevTabRef.current !== 'credentials' && activeTab === 'credentials') {
-      refetch()
-      queryClient.invalidateQueries({ queryKey: ['dailyUsage'] })
-      const ids = (credentialsRef.current || []).filter(c => !c.disabled).map(c => c.id)
-      if (ids.length === 0) {
-        prevTabRef.current = activeTab
-        return
-      }
-      isFetchingBalances.current = true
-      ;(async () => {
-        let runningTotal = 0
-        let queried = 0
-        setLiveCreditsTotal(0)
-        setLiveCreditsQueried(0)
-        for (const id of ids) {
-          setLoadingBalanceIds(prev => { const next = new Set(prev); next.add(id); return next })
-          try {
-            const balance = await getCredentialBalance(id)
-            runningTotal += balance.remaining
-            setBalanceMap(prev => { const next = new Map(prev); next.set(id, balance); return next })
-            setLiveCreditsTotal(runningTotal)
-          } catch (_) {
-            // 静默失败
-          } finally {
-            setLoadingBalanceIds(prev => { const next = new Set(prev); next.delete(id); return next })
-            setLiveCreditsQueried(++queried)
-          }
-        }
-        await patchMissedCredentials(new Set(ids))
-        isFetchingBalances.current = false
-        // 拉取期间账号可能被禁用：强制重算一次，按最新禁用态修正过渡展示值
-        setBalanceMap(prev => new Map(prev))
-      })()
+      refreshOnReturn()
     }
     prevTabRef.current = activeTab
   }, [activeTab]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -251,5 +260,6 @@ export function useBalanceFetcher({
     setLiveCreditsQueried,
     isFetchingBalances,
     prevEnabledIdsRef,
+    refreshOnReturn,
   }
 }
