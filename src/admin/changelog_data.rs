@@ -67,6 +67,48 @@ const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub fn build_release_notes() -> Vec<ReleaseNote> {
     let mut notes = vec![
         ReleaseNote {
+            version: "3.5.1".to_string(),
+            is_latest: false,
+            groups: vec![
+                feat_group(vec![Bilingual::new(
+                    "支持 Claude Fable 5.1（#60）：fable-5.1 / fable-5-1 等写法映射到上游 claude-fable-5.1，/v1/models 回退表新增对应条目。Kiro 仅对 Enterprise 客户开放该模型（需管理员通过模型治理启用，仅 us-east-1），能否使用取决于账号权限",
+                    "Added Claude Fable 5.1 support (#60): fable-5.1 / fable-5-1 and similar names are now routed to the upstream claude-fable-5.1 model, and the /v1/models fallback list gains matching entries. Kiro only offers this model to Enterprise customers (an administrator must enable it through model governance, us-east-1 only), so availability depends on your account's access",
+                )]),
+                improve_group(vec![Bilingual::new(
+                    "Fable 系列的 max_tokens 上限从 64K 调整为官方的 128K",
+                    "The max_tokens cap for the Fable family is raised from 64K to the official 128K",
+                )]),
+            ],
+        },
+        ReleaseNote {
+            version: "3.5.0".to_string(),
+            is_latest: false,
+            groups: vec![fix_group(vec![
+                Bilingual::new(
+                    "修复 Claude Code 反复出现 \"Resume directly\" 的死循环（#59）：不再用本地估算的 input_tokens ≥ 1M 改写 stop_reason 为 model_context_window_exceeded，真正超限仍由上游返回 prompt is too long；OpenAI 兼容端点同步受益",
+                    "Fixed the endless \"Resume directly\" loop in Claude Code (#59): a local input_tokens estimate of 1M or more no longer rewrites stop_reason to model_context_window_exceeded. Real over-limit requests are still rejected upstream with prompt is too long; the OpenAI-compatible endpoints benefit too",
+                ),
+                Bilingual::new(
+                    "会话中途出现的内联 system 通知改为就地挂回相邻 user 消息，不再每轮重复放到当前消息开头；历史字节跨轮稳定，通知进入可缓存前缀（升级后带通知的会话会有一次缓存未命中）",
+                    "Inline system notices that appear mid-conversation are now attached in place to the adjacent user message instead of being replayed at the head of the current message every turn. History stays byte-stable across turns and the notices join the cacheable prefix (sessions with notices see one cache miss after upgrading)",
+                ),
+            ])],
+        },
+        ReleaseNote {
+            version: "3.4.46".to_string(),
+            is_latest: false,
+            groups: vec![
+                feat_group(vec![Bilingual::new(
+                    "账号余额弹窗融入 Kiro 账号详情全部信息：主配额 / 免费试用 / 奖励总计三卡片分解、生效奖励明细（Code / 过期时间 / 用量进度）、订阅详情（订阅类型 / 超额费率 / 可升级）、用户 ID、Token 到期与账号添加日期",
+                    "The account balance dialog now shows the full Kiro account details: base / free-trial / bonus quota breakdown cards, active bonus details (code, expiry, usage progress), subscription details (type, overage rate, upgradeable badge), user ID, token expiry and the date the account was added",
+                )]),
+                improve_group(vec![Bilingual::new(
+                    "getUsageLimits 请求补齐 isEmailRequired 参数取回用户信息；账号添加时间自动记录，存量账号首次加载时补写",
+                    "getUsageLimits requests now pass isEmailRequired so user info is returned; the account creation date is recorded automatically and backfilled for existing accounts on first load",
+                )]),
+            ],
+        },
+        ReleaseNote {
             version: "3.4.45".to_string(),
             is_latest: false,
             groups: vec![

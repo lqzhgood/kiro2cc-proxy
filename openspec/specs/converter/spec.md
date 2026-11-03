@@ -68,6 +68,13 @@
 - **WHEN** 调用 `infer_cache_read_tokens` 传入 `model` 包含子串 `"opus-4-6"` 或 `"opus-4.6"`
 - **THEN** 内部 `(k_ref, input_price, output_price)` 取 `(2.60, 15.0, 75.0)`，与 opus-4.7/4.8 同（依据：官方单价均 .00 / .00）
 
+#### 场景：fable-5.1 映射到独立的上游模型 ID
+- **WHEN** 调用 `map_model` 传入包含 `fable` 且版本号为 5.1 的模型名（`fable-5.1` / `fable-5-1` / `Fable 5.1`，可带 `-thinking` 或日期后缀）
+- **THEN** 返回 `claude-fable-5.1`
+- **AND** 其他 fable 名（`fable-5`、`fable-5-10` 等）仍返回 `claude-fable-5`
+- **AND** `model_max_output_tokens` 对 fable 返回 128K，`min_cacheable_tokens("claude-fable-5.1")` 为 512
+- **NOTE** Kiro 仅对特定账号 / 区域开放 Fable 5.1，能否使用由上游账号权限决定；静态模型表列出 `claude-fable-5-1` 与 `claude-fable-5-1-thinking`
+
 #### 场景：fable-5 沿用 opus 顶端 k_ref（占位）
 - **WHEN** 调用 `infer_cache_read_tokens` 传入 `model` 包含子串 `"fable"`
 - **THEN** 内部 `(k_ref, input_price, output_price)` 取 `(2.60, 15.0, 75.0)` 作为占位值
@@ -117,3 +124,20 @@
   - `claude-haiku-4-5-20251001-thinking` → `64000`
   - 旧版 3.x / 4 / 4.5 / auto / deepseek / glm 条目全部保持原值
 
+
+## 修改需求（issue #59）
+
+### 需求：会话中途内联 system 通知就地放置（`src/anthropic/converter/convert.rs` / `history.rs`）
+
+#### 场景：被分流的内联通知挂回相邻 user 消息
+- **WHEN** 会话已有 user/assistant 消息之后出现 `role:"system"` 内联消息，且它被判定为动态块（已知 hook/通知前缀，或相对会话基线是中途新增）
+- **THEN** 它不进入 `history[0]`，也不再每轮置顶到当前消息开头，而是以 `<system-reminder>` 包裹挂到相邻 user 消息：优先挂到紧随其后的 user 消息开头，否则挂到紧邻的前一条 user 消息末尾，夹在两条 assistant 之间时就近取后面再取前面的 user 消息
+- **AND** 同一通知在后续轮次里挂靠的 user 消息文本逐字节不变（前缀缓存稳定）
+
+#### 场景：通知不得顶替当前消息
+- **WHEN** 通知位于最后一条 user 消息（例如只含 tool_result）之后
+- **THEN** 通知挂到该 user 消息末尾，该消息仍是当前消息并保留其 tool_result；正文为空时补 `(tool result above)` 占位
+
+#### 场景：其余路径不变
+- **WHEN** 动态块来自顶层 `system`，或是 `<total_tokens>` 预算提示，或内联 system 位于会话开头
+- **THEN** 顶层动态块与预算提示仍放当前消息开头，会话开头的内联 system 仍并入系统区
