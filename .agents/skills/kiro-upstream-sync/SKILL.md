@@ -29,7 +29,14 @@ description: 同步此 kiro2cc-proxy fork 的上游更新，适配并验证独�
 
 ## 验证与交付
 
-按维护文档运行固定回归：Node 合约测试、管理端构建、Playwright 页面回归、Python 脚本回归，以及构建两套前端后的 `cargo test admin::fork_import`。配置测试仅使用 example.invalid 等虚构地址，检查未授权访问和无配置的降级行为。脚本测试必须使用合成数据根目录和模拟剪贴板，不导出本机真实凭据或向服务提交真实账户。
+升级或同步上游时，遵守用户明确要求：**不要在本机运行一键导入的 Playwright 浏览器回归**。2026-11-03 的升级验证以 10 个 worker 启动 Chrome，时间和数量与 Windows 账户的 10 次密码验证失败及锁定吻合；重复启动浏览器可能再次触发账户锁定。
+
+- 禁止运行 `npm --prefix tools/one-click-import run verify`（或进入该目录后的 `npm run verify`），因为它会间接执行浏览器回归。
+- 禁止运行该目录的 `npm run test:browser`、`npx playwright test` 或直接执行 `browser.spec.mjs`；不要通过设置 `KIRO_TEST_BROWSER=chrome`、改用 Chromium/Edge、降低并发或其他等价入口绕过此限制。常规“升级并验证”请求不表示撤销此要求。
+- 即使维护文档仍列出完整 `verify` 流程，也按本节拆开运行不启动浏览器的检查；不要为通过测试修改 Windows 账户锁定策略。
+- 交付时明确记录“浏览器回归按用户要求跳过”，不能写成通过。只有用户后续明确要求恢复这项测试时，才重新评估执行方式。
+
+固定回归仅运行：`npm --prefix tools/one-click-import test`（Node 合约测试）、管理端构建、Python 脚本回归，以及构建两套前端后的 `cargo test admin::fork_import`。运行前核对 package.json 中这些命令及其 pre/post 钩子仍不启动浏览器。配置测试仅使用 example.invalid 等虚构地址，检查未授权访问和无配置的降级行为。脚本测试必须使用合成数据根目录和模拟剪贴板，不导出本机真实凭据或向服务提交真实账户。
 
 若上游改变相关后端路径，补跑受影响的 Rust 检查和仓库要求的检查；读 `.github/workflows/test.yaml` 核对当前上游命令。接口变化时同时更新合约断言和 mock，并核对实际后端请求类型或反序列化验证；新增必填字段必须确认来源和默认值，不能猜造字段值或仅凭旧 mock 通过就认定兼容。环境缺失时完成能运行的部分，准确报告未验证项，不能将跳过写成通过。
 
