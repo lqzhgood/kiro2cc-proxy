@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Harllan He. Licensed under MIT.
 // 侧边栏区块（自 dashboard.tsx 拆出，纯代码搬移）
 import { useTranslation } from 'react-i18next'
-import { Languages, LogOut, Server, PanelLeftClose, PanelLeftOpen, Sun, Moon } from 'lucide-react'
+import { Languages, LogOut, Server, PanelLeft, Sun, Moon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { LANG_STORAGE_KEY } from '@/i18n'
@@ -79,7 +79,7 @@ export function Sidebar({
       )}
       <aside
         id="admin-sidebar"
-        className={`${sidebarCollapsed ? 'w-16' : 'w-[232px]'} max-md:w-[232px] max-md:z-40 ${mobileOpen ? 'max-md:visible max-md:translate-x-0' : 'max-md:invisible max-md:-translate-x-full'} bg-sidebar bg-grid-dot border-r-[0.5px] border-hairline fixed top-0 left-0 bottom-0 flex flex-col z-10 transition-all duration-200`}
+        className={`${sidebarCollapsed ? 'w-16' : 'w-[208px]'} max-md:w-[208px] max-md:z-40 ${mobileOpen ? 'max-md:visible max-md:translate-x-0' : 'max-md:invisible max-md:-translate-x-full'} bg-sidebar bg-grid-dot border-r-[0.5px] border-hairline fixed top-0 left-0 bottom-0 flex flex-col z-10 transition-all duration-200`}
       >
         {/* 内容区整体做一次透明度过渡：把 header/nav/footer 所有跟随收起态瞬时切换的布局
             （flex 方向、文字显隐、ml-auto）都藏在这次淡出淡入的不可见瞬间，避免逐处单独处理时互相错位 */}
@@ -120,7 +120,7 @@ export function Sidebar({
             title={collapsed ? t('dashboard.expandSidebar') : t('dashboard.collapseSidebar')}
             aria-label={collapsed ? t('dashboard.expandSidebar') : t('dashboard.collapseSidebar')}
           >
-            {collapsed ? <PanelLeftOpen className="h-3.5 w-3.5" /> : <PanelLeftClose className="h-3.5 w-3.5" />}
+            <PanelLeft className="h-3.5 w-3.5" />
           </Button>
         </div>
         <nav className="flex-1 overflow-y-auto px-2 py-3">

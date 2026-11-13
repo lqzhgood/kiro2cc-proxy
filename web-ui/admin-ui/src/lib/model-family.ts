@@ -65,6 +65,46 @@ export function groupByFamily(models: ModelItem[]): FamilyGroup[] {
   return [...byName].map(([name, items]) => ({ name, models: items }))
 }
 
+export type InputModality = 'text' | 'image'
+
+/**
+ * 上游取值 → 归一化模态：精确匹配（忽略大小写与空白），未知值忽略。
+ * 用 Map 而非 Record 查表 —— Record 的索引会穿透原型链，`"constructor"` 这类键会取到
+ * 函数并被误当成已知模态写进结果集（最终被顺序表过滤掉，但类型断言失真）。
+ */
+const KNOWN_MODALITY = new Map<string, InputModality>([
+  ['text', 'text'],
+  ['image', 'image'],
+])
+/** 固定输出顺序，保证列表页与弹窗的徽章排列一致，不随上游返回顺序漂移 */
+const MODALITY_ORDER: readonly InputModality[] = ['text', 'image']
+
+/** 上游 `supportedInputTypes`（如 `["TEXT","IMAGE"]`）→ 归一化模态集合；未识别的值忽略 */
+export function inputModalities(inputTypes?: string[] | null): InputModality[] {
+  const found = new Set<InputModality>()
+  for (const item of inputTypes ?? []) {
+    const modality = KNOWN_MODALITY.get(item.trim().toLowerCase())
+    if (modality) found.add(modality)
+  }
+  return MODALITY_ORDER.filter((m) => found.has(m))
+}
+
+/** 空态语义：未声明（含静态表回退）/ 声明了但本项目一个都不认识 */
+export type ModalityEmptyState =
+  | { kind: 'none' }
+  | { kind: 'unrecognized'; values: string }
+
+/**
+ * 模态为空时的语义派生 —— 两种空态的文案与占位符不同，列表页与弹窗共用本函数，
+ * 避免「未返回」与「不认识」的口径在两处各自演化。
+ */
+export function modalityEmptyState(inputTypes?: string[] | null): ModalityEmptyState {
+  const declared = (inputTypes?.length ?? 0) > 0
+  return declared
+    ? { kind: 'unrecognized', values: (inputTypes ?? []).join(', ') }
+    : { kind: 'none' }
+}
+
 export interface RateRange {
   min: number
   max: number

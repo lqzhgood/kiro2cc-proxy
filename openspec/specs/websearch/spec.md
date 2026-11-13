@@ -47,17 +47,17 @@
 
 ### Requirement: 搜索结果回填续请求
 
-系统 SHALL 基于首次转换的 ConversationState 手工构建续请求（不经 convert_request 重转换）：conversationId、agentContinuationId、history 保持不变，`context.tool_results` 回填搜索结果，并通过 `call_api_stream` 续流，续流事件链入同一客户端 SSE 流（不重发 message_start，message_stop 由桥接收尾统一补发）。已流出的 assistant 文本/thinking 不回填续请求（依赖 Kiro 同 conversationId 会话续接）。
+系统 SHALL 基于首次转换的 ConversationState 手工构建续请求（不经 convert_request 重转换）：conversationId、agentContinuationId 保持不变，原 history 作为前缀保持不变，其后追加「基底 current_message（用户原问题或上一轮 tool_result 消息）+ 携带本轮 web_search toolUse 的 assistant 消息」，使 `tool_result` 与紧邻上一条消息中的 `tool_use` 配对（上游否则返回 400 TOOL_USE_RESULT_MISMATCH）；`current_message` 只承载本轮 `context.tool_results`，并通过 `call_api_stream` 续流，续流事件链入同一客户端 SSE 流（不重发 message_start，message_stop 由桥接收尾统一补发）。已流出的 assistant 文本/thinking 不回填续请求。
 
 #### Scenario: 续请求保持缓存不变量
 - **WHEN** 桥接构建续请求
 - **THEN** 续请求的 conversationId 与 agentContinuationId 与首次请求完全一致
-- **AND** history 与首次请求逐字节一致
+- **AND** 原 history 作为新 history 的前缀逐字节不变，其后恰好追加「基底 current_message」与「携带本轮 web_search toolUse 的 assistant 消息」两条
 
 #### Scenario: 多轮桥接状态演进
 - **WHEN** 单请求内发生第 2 轮及后续轮次桥接
 - **THEN** 每轮续请求基于上一轮续请求所用的 ConversationState 演进（`current_message.tool_results` 替换为本轮结果）
-- **AND** 所有轮次的 history 与首次请求逐字节一致（中间轮 toolResults 不沉入 history）
+- **AND** 每轮在上一轮 history 末尾追加一对消息（上一轮 current_message 沉入 history + 本轮 web_search toolUse），已有 history 保持逐字节前缀不变
 
 #### Scenario: 续流块索引单调
 - **WHEN** 续流事件链入同一客户端 SSE 流

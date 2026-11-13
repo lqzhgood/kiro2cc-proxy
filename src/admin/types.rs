@@ -588,6 +588,22 @@ pub struct SetThinkingAsTextRequest {
     pub enabled: bool,
 }
 
+/// 思考折叠开关查询响应
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThinkingCollapseResponse {
+    /// 思考块结束后是否折叠为原生可折叠 thinking 块（仅 cli 入口，依赖思考文本化）
+    pub enabled: bool,
+}
+
+/// 设置思考折叠开关请求
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetThinkingCollapseRequest {
+    /// 思考块结束后是否折叠为原生可折叠 thinking 块
+    pub enabled: bool,
+}
+
 /// 会话 credits 汇总行开关查询响应
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -859,6 +875,8 @@ pub struct AdminModelItem {
     pub released_at: Option<String>,
     /// 官方模型描述；上游未返回或回退静态表时为 None
     pub description: Option<String>,
+    /// 上游声明的输入模态（`TEXT` / `IMAGE`）；上游未返回或回退静态表时为空数组
+    pub input_types: Vec<String>,
 }
 
 /// 支持模型列表响应

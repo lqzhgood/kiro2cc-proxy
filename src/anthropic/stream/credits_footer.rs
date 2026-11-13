@@ -148,7 +148,7 @@ fn block_type(block: &serde_json::Value) -> Option<&str> {
     block.get("type").and_then(|t| t.as_str())
 }
 
-/// 最后一条消息是否是用户亲自发送的新一轮输入（对应 Claude Code 输出
+/// 末尾连续的 user 消息是否含用户亲自发送的新一轮输入（对应 Claude Code 输出
 /// `✻ Brewed for Ns` 的那个「轮」的起点）。
 ///
 /// 一轮 = Claude Code 的一次 query 循环，循环内部会多次请求上游，且最后一条 user 消息不一定带
@@ -159,27 +159,42 @@ fn block_type(block: &serde_json::Value) -> Option<&str> {
 /// - 含用户亲自输入的文本（见 [`has_human_text`]），或图片 / 文档块：新一轮。提醒块与
 ///   用户正文可能是独立文本块，也可能合并成同一段文本，两种形态都按此判断
 fn is_new_user_turn(messages: &[Message]) -> bool {
-    let Some(last) = messages.last() else {
-        return false;
-    };
-    if last.role != "user" {
+    // Claude Code 把用户输入与其后新注入的附件（deferred tools、MCP 指令等）拆成独立消息，
+    // 附件可能是 user 消息，也可能是内联 `role:"system"` 消息（转换层把后者当作动态系统块处理）。
+    // 只看最后一条会把「仅含附件」的消息误判为续请求，所以向前跳过 system 消息，
+    // 看末尾连续的 user 消息整体，遇到 assistant 为止。
+    let trailing: Vec<&Message> = messages
+        .iter()
+        .rev()
+        .take_while(|m| m.role == "user" || m.role == "system")
+        .filter(|m| m.role == "user")
+        .collect();
+    if trailing.iter().any(|m| has_tool_result(m)) {
         return false;
     }
-    match &last.content {
+    trailing.iter().any(|m| has_human_input(m))
+}
+
+/// 一条 user 消息是否带 tool_result（工具往返的续请求）
+fn has_tool_result(message: &Message) -> bool {
+    matches!(
+        &message.content,
+        serde_json::Value::Array(blocks) if blocks.iter().any(|b| block_type(b) == Some("tool_result"))
+    )
+}
+
+/// 一条 user 消息是否含用户亲自输入的内容（文本、图片或文档）
+fn has_human_input(message: &Message) -> bool {
+    match &message.content {
         serde_json::Value::String(s) => has_human_text(s),
-        serde_json::Value::Array(blocks) => {
-            if blocks.iter().any(|b| block_type(b) == Some("tool_result")) {
-                return false;
-            }
-            blocks.iter().any(|b| match block_type(b) {
-                Some("text") => b
-                    .get("text")
-                    .and_then(|t| t.as_str())
-                    .is_some_and(has_human_text),
-                Some("image" | "document") => true,
-                _ => false,
-            })
-        }
+        serde_json::Value::Array(blocks) => blocks.iter().any(|b| match block_type(b) {
+            Some("text") => b
+                .get("text")
+                .and_then(|t| t.as_str())
+                .is_some_and(has_human_text),
+            Some("image" | "document") => true,
+            _ => false,
+        }),
         _ => false,
     }
 }
@@ -336,12 +351,21 @@ fn format_elapsed(elapsed: Duration) -> String {
     }
 }
 
+/// credits 数值格式：保留 3 位小数，末位是 0 时省略该 0（0.060 → 0.06，0.123 → 0.123，1.000 → 1.00）
+fn format_credits(value: f64) -> String {
+    let mut s = format!("{value:.3}");
+    if s.ends_with('0') {
+        s.pop();
+    }
+    s
+}
+
 /// 汇总行正文（不含样式包裹）
 fn footer_body(snapshot: &CreditsSnapshot) -> String {
     format!(
-        "{FOOTER_PREFIX}{:.2}{FOOTER_SESSION_SEP}{:.2}{FOOTER_TIME_SEP}{}",
-        snapshot.turn,
-        snapshot.session,
+        "{FOOTER_PREFIX}{}{FOOTER_SESSION_SEP}{}{FOOTER_TIME_SEP}{}",
+        format_credits(snapshot.turn),
+        format_credits(snapshot.session),
         format_elapsed(snapshot.elapsed)
     )
 }
@@ -439,6 +463,29 @@ mod tests {
     fn footer_matches_kiro_cli_format() {
         let body = footer_body(&snap(0.86, 8.73, 12));
         assert_eq!(body, "▸ Credits: turn 0.86 • session 8.73 | Time: 12s");
+    }
+
+    #[test]
+    fn credits_use_three_decimals_and_drop_last_zero() {
+        assert_eq!(format_credits(0.06), "0.06");
+        assert_eq!(format_credits(0.0), "0.00");
+        assert_eq!(format_credits(1.0), "1.00");
+        assert_eq!(format_credits(0.123), "0.123");
+        assert_eq!(format_credits(8.7), "8.70");
+        assert_eq!(format_credits(0.1234), "0.123");
+        // 四舍五入后末位为 0 同样省略
+        assert_eq!(format_credits(0.0596), "0.06");
+        assert_eq!(format_credits(12.3456), "12.346");
+    }
+
+    #[test]
+    fn footer_with_three_decimals_is_still_stripped() {
+        let text = format!(
+            "答案{}",
+            render_footer(&snap(0.123, 8.456, 5), ThinkingTextStyle::Plain, "答案")
+        );
+        assert!(text.contains("turn 0.123 • session 8.456"), "text={text:?}");
+        assert_eq!(strip_credits_footer(&text), "答案");
     }
 
     #[test]
@@ -585,6 +632,66 @@ mod tests {
             json!([{"type": "text", "text": "x"}])
         )]));
         assert!(!is_new_user_turn(&[]));
+    }
+
+    #[test]
+    fn new_turn_looks_at_trailing_user_run_not_only_last_message() {
+        let text = |t: &str| json!({"type": "text", "text": t});
+        let reminder = |t: &str| text(&format!("<system-reminder>\n{t}\n</system-reminder>"));
+        let tool_result = json!({"type": "tool_result", "tool_use_id": "t1", "content": "ok"});
+
+        // 用户输入与其后新注入的附件被拆成两条 user 消息：最后一条只有附件，仍是新一轮
+        assert!(is_new_user_turn(&[
+            msg("user", json!("hi")),
+            msg("assistant", json!("你好")),
+            msg("user", json!("你是什么模型")),
+            msg("user", json!([reminder("deferred tools")])),
+        ]));
+        // 附件是内联 system 消息（排在用户输入之后）：仍是新一轮
+        assert!(is_new_user_turn(&[
+            msg("user", json!("hi")),
+            msg("assistant", json!("你好")),
+            msg("user", json!("你是什么模型")),
+            msg("system", json!([reminder("deferred tools")])),
+        ]));
+        // 内联 system 消息夹在工具往返之后：仍是续请求
+        assert!(!is_new_user_turn(&[
+            msg("user", json!("查一下")),
+            msg("assistant", json!([{"type": "tool_use", "id": "t1"}])),
+            msg("user", json!([tool_result.clone()])),
+            msg("system", json!("动态提示")),
+        ]));
+        // system 之前隔着 assistant：不跨过 assistant 回看
+        assert!(!is_new_user_turn(&[
+            msg("user", json!("你好")),
+            msg("assistant", json!("回复")),
+            msg("system", json!([reminder("mcp")])),
+        ]));
+        // 附件在用户输入之前的同一段内：仍是新一轮
+        assert!(is_new_user_turn(&[
+            msg("assistant", json!("你好")),
+            msg("user", json!([reminder("mcp")])),
+            msg("user", json!("你是谁")),
+        ]));
+
+        // 工具往返：assistant(tool_use) 之后的 user 段含 tool_result，附件拆分不改变结论
+        assert!(!is_new_user_turn(&[
+            msg("user", json!("查一下")),
+            msg("assistant", json!([{"type": "tool_use", "id": "t1"}])),
+            msg("user", json!([tool_result.clone()])),
+            msg("user", json!([reminder("deferred tools")])),
+        ]));
+        // Stop hook 等注入的纯提醒段：不是新一轮
+        assert!(!is_new_user_turn(&[
+            msg("user", json!("你好")),
+            msg("assistant", json!("回复")),
+            msg("user", json!([reminder("Stop hook blocking error")])),
+        ]));
+        // 最后是 assistant：没有待处理的用户输入
+        assert!(!is_new_user_turn(&[
+            msg("user", json!("你好")),
+            msg("assistant", json!("回复")),
+        ]));
     }
 
     #[test]

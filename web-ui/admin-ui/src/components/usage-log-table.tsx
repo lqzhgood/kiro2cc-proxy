@@ -32,11 +32,6 @@ export function formatCost(cost: number): string {
   return `$${cost.toFixed(4)}`
 }
 
-/** UA 短标识：取首个空格前段（如 claude-cli/2.1.5），完整原文走 title 悬停展示 */
-function uaShort(ua: string): string {
-  return ua.split(/\s+/)[0] || ua
-}
-
 /**
  * 缓存命中百分比胶囊的展示开关。
  *
@@ -238,10 +233,10 @@ export function UsageLogTable({
                   {record.credentialLabel ?? <span className="text-ink-3">—</span>}
                   {record.userAgent && (
                     <span
-                      className="mt-px block truncate font-mono text-[10px] text-ink-3"
+                      className="mt-px block whitespace-normal break-words font-mono text-[10px] leading-tight text-ink-3"
                       title={record.userAgent}
                     >
-                      {uaShort(record.userAgent)}
+                      {record.userAgent}
                     </span>
                   )}
                 </td>
@@ -325,11 +320,6 @@ export function UsageLogTable({
                 <td className={`${CELL} text-right font-mono text-[12px] font-medium tabular-nums text-brand`}>
                   {recordCredits(record).toFixed(4)}
                   {record.creditsUsed != null && <span className="ml-1 text-[11px] text-ok">✓</span>}
-                  {record.creditsSaved != null && record.creditsSaved > 0 && (
-                    <small className="block text-[10px] font-normal text-ok">
-                      {t('common.savedPrefix', { amount: record.creditsSaved.toFixed(4) })}
-                    </small>
-                  )}
                 </td>
               </tr>
             )

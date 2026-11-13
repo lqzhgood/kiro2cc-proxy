@@ -21,6 +21,7 @@
 mod api_keys;
 mod changelog;
 mod changelog_data;
+mod chat_session_handler;
 mod dump_handler;
 mod error;
 mod fork_import;

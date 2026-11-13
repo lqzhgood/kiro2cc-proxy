@@ -229,7 +229,11 @@ impl StreamContext {
         mut self,
         style: Option<crate::anthropic::stream::ThinkingTextStyle>,
     ) -> Self {
-        self.thinking_text = style.map(crate::anthropic::stream::ThinkingTextRewriter::with_style);
+        // 折叠开关在构建改写器时读取一次：热切换只影响之后的新请求，同一请求内前后一致
+        self.thinking_text = style.map(|style| {
+            crate::anthropic::stream::ThinkingTextRewriter::with_style(style)
+                .with_collapse(crate::anthropic::stream::thinking_collapse_enabled())
+        });
         self
     }
 
@@ -415,10 +419,15 @@ impl StreamContext {
             }
             Event::Metering(metering) => {
                 let prev = self.metering_usage;
-                self.metering_usage = Some(metering.usage);
+                // 桥接续流的每一轮都是独立的上游请求，各自带一次 meteringEvent：
+                // 续流轮累加，本回复的 credits 才是各轮之和；同一轮内重复出现则仍以最新值覆盖
+                self.metering_usage = Some(match prev {
+                    Some(p) if self.has_continuation => p + metering.usage,
+                    _ => metering.usage,
+                });
                 self.metering_cache_read_tokens = metering.cache_read_input_tokens;
                 self.metering_cache_creation_tokens = metering.cache_creation_input_tokens;
-                if let Some(prev_val) = prev {
+                if let Some(prev_val) = prev.filter(|_| !self.has_continuation) {
                     tracing::warn!(
                         "[metering] 同一请求收到第2次 meteringEvent: new={} {} prev={} model={}",
                         metering.usage,
@@ -1148,6 +1157,7 @@ impl StreamContext {
             self.context_usage_percentage,
             report_creation_5m,
             report_creation_1h,
+            self.metering_usage,
             &self.model,
         ));
 

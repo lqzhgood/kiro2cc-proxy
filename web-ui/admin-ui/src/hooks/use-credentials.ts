@@ -16,6 +16,8 @@ import {
   setClientTokenPassthrough,
   getThinkingAsText,
   setThinkingAsText,
+  getThinkingCollapse,
+  setThinkingCollapse,
   getShowSessionCredits,
   setShowSessionCredits,
   getDumpKiroBody,
@@ -28,6 +30,7 @@ import {
   setLoadBalancingMode,
   getServerInfo,
   getApiKeys,
+  getChatSessions,
   createApiKey,
   updateApiKey,
   deleteApiKey,
@@ -50,7 +53,7 @@ import {
   getCredentialModels,
   getChangelog,
 } from '@/api/credentials'
-import type { AddCredentialRequest, UpdateCredentialRequest, CreateApiKeyRequest, UpdateApiKeyRequest } from '@/types/api'
+import type { AddCredentialRequest, UpdateCredentialRequest, CreateApiKeyRequest, UpdateApiKeyRequest, ApiKeyItem, ModelItem } from '@/types/api'
 
 // 查询凭据列表
 export function useCredentials() {
@@ -251,6 +254,25 @@ export function useSetThinkingAsText() {
     mutationFn: setThinkingAsText,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['thinkingAsText'] })
+    },
+  })
+}
+
+// 获取思考折叠开关
+export function useThinkingCollapse() {
+  return useQuery({
+    queryKey: ['thinkingCollapse'],
+    queryFn: getThinkingCollapse,
+  })
+}
+
+// 设置思考折叠开关
+export function useSetThinkingCollapse() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: setThinkingCollapse,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['thinkingCollapse'] })
     },
   })
 }
@@ -503,6 +525,40 @@ export function useCredentialModels(id: number | null) {
   })
 }
 
+// 对话模型取当前 Key 可用账号的并集，不复用任意单账号的全局模型列表
+export function usePlaygroundModels(key: ApiKeyItem | null) {
+  const credentials = useCredentials()
+  const boundIds = key?.boundCredentialIds
+  const ids = key && !credentials.isError
+    ? (credentials.data?.credentials ?? [])
+        .filter((c) => !c.disabled && (!boundIds?.length || boundIds.includes(c.id)))
+        .map((c) => c.id)
+    : []
+  const queries = useQueries({
+    queries: ids.map((id) => ({
+      queryKey: ['credential-models', id],
+      queryFn: () => getCredentialModels(id),
+      retry: false,
+    })),
+  })
+  const isPending = key !== null && (credentials.isPending || queries.some((q) => q.isPending))
+  const models = new Map<string, ModelItem>()
+  if (!isPending && !credentials.isError) {
+    for (const query of queries) {
+      if (!query.isSuccess) continue
+      for (const model of query.data.data) {
+        if (!models.has(model.id)) models.set(model.id, model)
+      }
+    }
+  }
+  return {
+    models: Array.from(models.values()),
+    isPending,
+    isError: key !== null && (credentials.isError || queries.some((q) => q.isError)),
+    refetch: () => Promise.all([credentials.refetch(), ...queries.map((q) => q.refetch())]),
+  }
+}
+
 // ============ 更新日志 Hooks ============
 
 // 查询 GitHub 最新版本号（用于侧栏版本号旁的更新红点）
@@ -605,5 +661,16 @@ export function useThrottleLogs(id: number, page: number, pageSize = 50) {
     queryKey: ['throttleLogs', id, page, pageSize],
     queryFn: () => getThrottleLogs(id, page, pageSize),
     enabled: id > 0,
+  })
+}
+
+// ============ 对话会话 Hooks ============
+
+export const CHAT_SESSIONS_KEY = ['chatSessions'] as const
+
+export function useChatSessions() {
+  return useQuery({
+    queryKey: CHAT_SESSIONS_KEY,
+    queryFn: getChatSessions,
   })
 }

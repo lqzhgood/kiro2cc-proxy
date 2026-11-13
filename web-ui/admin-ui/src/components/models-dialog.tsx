@@ -6,6 +6,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import { ModalityIcons } from '@/components/modality-icons'
 import { useCredentialModels } from '@/hooks/use-credentials'
 import { parseError } from '@/lib/utils'
 import {
@@ -36,7 +37,7 @@ export function ModelsDialog({ credentialId, open, onOpenChange }: ModelsDialogP
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="sm:max-w-lg sm:pr-4">
         <DialogHeader>
           <DialogTitle>
             {t('credentials.modelsDialogTitle', { id: credentialId })}
@@ -69,9 +70,9 @@ export function ModelsDialog({ credentialId, open, onOpenChange }: ModelsDialogP
         })()}
 
         {data && (
-          <div className="space-y-3 max-h-[60vh] overflow-y-auto">
+          <div className="space-y-3 max-h-[60vh] overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             {groups.map((group) => (
-              <div key={group.name} className="border border-transparent rounded-md p-3">
+              <div key={group.name} className="border border-transparent border-r-0 rounded-md p-3 pr-0">
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-[13px] font-semibold text-ink-1">
                     {familyLabel(group.name)}
@@ -81,14 +82,19 @@ export function ModelsDialog({ credentialId, open, onOpenChange }: ModelsDialogP
                   </span>
                 </div>
                 <ul className="space-y-1">
-                  {group.models.map((model) => (
-                    <li key={model.id} className="flex items-center justify-between text-[12px]">
-                      <span className="font-mono text-ink-2 truncate">{model.id}</span>
-                      <span className="font-mono tabular-nums text-ink-3 ml-2 shrink-0">
-                        {model.rate_multiplier != null ? formatRate(model.rate_multiplier) : '—'}
-                      </span>
-                    </li>
-                  ))}
+                  {group.models.map((model) => {
+                    return (
+                      <li key={model.id} className="flex items-center justify-between text-[12px]">
+                        <span className="font-mono text-ink-2 truncate">{model.id}</span>
+                        <span className="ml-2 flex shrink-0 items-center gap-2">
+                          <ModalityIcons inputTypes={model.input_types} />
+                          <span className="font-mono tabular-nums text-ink-3">
+                            {model.rate_multiplier != null ? formatRate(model.rate_multiplier) : '—'}
+                          </span>
+                        </span>
+                      </li>
+                    )
+                  })}
                 </ul>
               </div>
             ))}

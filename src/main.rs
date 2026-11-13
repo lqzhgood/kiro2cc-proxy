@@ -120,6 +120,7 @@ async fn main() {
     anthropic::set_output_tokens_include_thinking(config.output_tokens_include_thinking);
     anthropic::set_models_official_aliases(config.models_official_aliases);
     anthropic::set_thinking_as_text(config.thinking_as_text);
+    anthropic::set_thinking_collapse(config.thinking_collapse);
     anthropic::set_show_session_credits(config.show_session_credits);
     if config.show_session_credits {
         tracing::info!(
@@ -146,6 +147,11 @@ async fn main() {
     if config.thinking_as_text {
         tracing::info!(
             "思考文本化已开启（thinkingAsText=true）：Claude Code 的 thinking 将以引用文本逐行展示"
+        );
+    }
+    if config.thinking_as_text && config.thinking_collapse {
+        tracing::info!(
+            "思考折叠已开启（thinkingCollapse=true）：cli 入口的思考结束后折叠为原生可折叠 thinking 块（Ctrl+O 展开）"
         );
     }
     if config.client_token_passthrough {
@@ -205,6 +211,14 @@ async fn main() {
         std::process::exit(1);
     });
     let token_manager = Arc::new(token_manager);
+
+    // 账号保活：后台定期刷新长期闲置的账号（始终开启，间隔由 credentialKeepAliveHours 配置）
+    kiro::token_manager::set_keep_alive_hours(config.credential_keep_alive_hours);
+    tracing::info!(
+        "账号保活已开启：距上次刷新超过 {} 小时的闲置账号将被定期刷新",
+        kiro::token_manager::keep_alive_hours()
+    );
+    token_manager.spawn_keep_alive();
 
     // 创建 RPM 追踪器
     let rpm_tracker = Arc::new(model::rpm::RpmTracker::new());
@@ -364,6 +378,13 @@ async fn main() {
             }
             if let Some(ref tracker) = usage_tracker {
                 admin_state = admin_state.with_usage_tracker(tracker.clone());
+            }
+            // 对话页会话存储：失败只影响历史会话功能，不阻止代理服务启动
+            match model::chat_session::ChatSessionStore::load(
+                throttle_data_dir.join("chat_sessions"),
+            ) {
+                Ok(store) => admin_state = admin_state.with_chat_session_store(Arc::new(store)),
+                Err(e) => tracing::error!("加载对话会话失败，历史会话功能不可用: {}", e),
             }
             admin_state = admin_state.with_throttle_log_store(throttle_log_store.clone());
             admin_state = admin_state.with_failure_log_store(failure_log_store.clone());

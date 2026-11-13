@@ -164,8 +164,8 @@ pub struct Config {
     pub cache_simulation: CacheSimulationConfig,
 
     /// 客户端 token 直通（true 时 usage 字段 1:1 上报真实值，不再按
-    /// CLIENT_TOKEN_DISPLAY_SCALE 缩放）。默认 false 维持既有展示缩放。
-    #[serde(default)]
+    /// CLIENT_TOKEN_DISPLAY_SCALE 缩放）。默认 true。
+    #[serde(default = "default_true")]
     pub client_token_passthrough: bool,
 
     /// 按 Anthropic cache_control 断点规则模拟缓存记账（见 `cache::breakpoint`）
@@ -212,6 +212,16 @@ pub struct Config {
     #[serde(default = "default_true")]
     pub thinking_as_text: bool,
 
+    /// 思考块结束后折叠为 Claude Code 原生可折叠 thinking 块（依赖 `thinkingAsText`）
+    ///
+    /// 开启后，思考过程仍以文本逐行流式展示；思考块结束时，代理在同一 index 上补发
+    /// 原生 thinking 块（start + thinking_delta + signature_delta），Claude Code 会清空流式文本预览，
+    /// 并把该块落地为原生 thinking 消息（默认折叠，Ctrl+O 展开）。折叠后滚动区不再残留整段思考文本。
+    /// 仅对 `cli` 入口（ANSI 样式）生效；Claude Desktop、`local-agent` 等入口的原生 thinking 默认不展示，
+    /// 折叠会让思考内容消失，所以这些入口保持纯文本。`thinkingAsText=false` 时无效。默认 true。
+    #[serde(default = "default_true")]
+    pub thinking_collapse: bool,
+
     /// 会话结束时在回复末尾展示 credits 汇总行（仅 Claude Code 客户端）
     ///
     /// 开启后，每次对话真正结束（stop_reason=end_turn）时追加一行
@@ -221,6 +231,15 @@ pub struct Config {
     /// 进程重启后清零。回传历史时该行会被自动剥离，上游看不到。默认 false。
     #[serde(default)]
     pub show_session_credits: bool,
+
+    /// 账号保活间隔（小时）：后台任务（始终开启，无开关）会定期刷新长期闲置的账号，
+    /// 让 refreshToken 保持活跃，并把轮换后的新 refreshToken 写回账号文件。
+    ///
+    /// 账号距上次刷新超过该时间才会被保活，默认 72；低于 24 按 24 处理。
+    /// 账号之间错开时间；失败不重试；已被服务端撤销的账号会被跳过。
+    /// 注意：若过期来自服务端的绝对会话时限（如 IAM Identity Center 的 90 天），保活无法延长。
+    #[serde(default = "default_credential_keep_alive_hours")]
+    pub credential_keep_alive_hours: u32,
 
     /// 分块写入约束的行数上限（issue #46）
     ///
@@ -262,6 +281,10 @@ pub struct Config {
     config_path: Option<PathBuf>,
 }
 
+fn default_credential_keep_alive_hours() -> u32 {
+    72
+}
+
 fn default_write_chunking_max_lines() -> u32 {
     crate::anthropic::DEFAULT_WRITE_CHUNKING_MAX_LINES
 }
@@ -279,7 +302,7 @@ fn default_region() -> String {
 }
 
 fn default_kiro_version() -> String {
-    "2.2.2".to_string()
+    "1.4.121".to_string()
 }
 
 // 0 = 关闭单账号 RPM 硬限（仅依赖上游 429 + throttle_delay 兜底）
@@ -335,14 +358,16 @@ impl Default for Config {
             max_rpm_per_credential: default_max_rpm_per_credential(),
             model_cache_ttl_secs: default_model_cache_ttl_secs(),
             cache_simulation: CacheSimulationConfig::default(),
-            client_token_passthrough: false,
+            client_token_passthrough: default_true(),
             prompt_cache_accounting: false,
             prompt_cache_min_tokens: default_prompt_cache_min_tokens(),
             models_official_aliases: false,
             output_tokens_include_thinking: false,
             forward_suggestion_mode: false,
             thinking_as_text: true,
+            thinking_collapse: default_true(),
             show_session_credits: false,
+            credential_keep_alive_hours: default_credential_keep_alive_hours(),
             write_chunking_max_lines: default_write_chunking_max_lines(),
             dump_kiro_body: false,
             log_file: None,
@@ -499,10 +524,20 @@ impl Config {
         {
             self.thinking_as_text = b;
         }
+        if let Ok(v) = env::var("THINKING_COLLAPSE")
+            && let Ok(b) = v.parse::<bool>()
+        {
+            self.thinking_collapse = b;
+        }
         if let Ok(v) = env::var("SHOW_SESSION_CREDITS")
             && let Ok(b) = v.parse::<bool>()
         {
             self.show_session_credits = b;
+        }
+        if let Ok(v) = env::var("CREDENTIAL_KEEP_ALIVE_HOURS")
+            && let Ok(n) = v.parse::<u32>()
+        {
+            self.credential_keep_alive_hours = n;
         }
         if let Ok(v) = env::var("WRITE_CHUNKING_MAX_LINES")
             && let Ok(n) = v.parse::<u32>()
@@ -564,10 +599,10 @@ mod tests {
     }
 
     #[test]
-    fn test_client_token_passthrough_default_false() {
-        // 缺省该字段时必须为 false（维持展示缩放，Issue #44 修复的默认零回归前提）
+    fn test_client_token_passthrough_default_true() {
+        // 缺省该字段时默认为 true（1:1 上报真实 token）
         let config: Config = serde_json::from_str("{}").unwrap();
-        assert!(!config.client_token_passthrough);
+        assert!(config.client_token_passthrough);
     }
 
     #[test]
@@ -595,12 +630,33 @@ mod tests {
     }
 
     #[test]
+    fn test_thinking_collapse_defaults_to_true() {
+        assert!(Config::default().thinking_collapse);
+        let config: Config = serde_json::from_str("{}").unwrap();
+        assert!(config.thinking_collapse);
+        let config: Config = serde_json::from_str(r#"{"thinkingCollapse": false}"#).unwrap();
+        assert!(!config.thinking_collapse);
+    }
+
+    #[test]
     fn test_show_session_credits_defaults_to_false() {
         assert!(!Config::default().show_session_credits);
         let config: Config = serde_json::from_str("{}").unwrap();
         assert!(!config.show_session_credits);
         let config: Config = serde_json::from_str(r#"{"showSessionCredits": true}"#).unwrap();
         assert!(config.show_session_credits);
+    }
+
+    #[test]
+    fn test_credential_keep_alive_defaults() {
+        let config: Config = serde_json::from_str("{}").unwrap();
+        assert_eq!(config.credential_keep_alive_hours, 72);
+        // 旧配置里残留的 credentialKeepAlive 开关字段会被忽略
+        let config: Config = serde_json::from_str(
+            r#"{"credentialKeepAlive": false, "credentialKeepAliveHours": 48}"#,
+        )
+        .unwrap();
+        assert_eq!(config.credential_keep_alive_hours, 48);
     }
 
     #[test]

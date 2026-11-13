@@ -230,12 +230,44 @@ impl FreeTrialInfo {
     }
 }
 
+/// 订阅类型串是否带有可判断等级的标记（FREE / PRO / POWER，不区分大小写）
+fn has_tier_marker(subscription_type: &str) -> bool {
+    let upper = subscription_type.to_uppercase();
+    ["FREE", "PRO", "POWER"].iter().any(|m| upper.contains(m))
+}
+
 impl UsageLimitsResponse {
     /// 获取订阅标题
     pub fn subscription_title(&self) -> Option<&str> {
         self.subscription_info
             .as_ref()
             .and_then(|info| info.subscription_title.as_deref())
+    }
+
+    /// 用于写回账号订阅等级的标题：优先 `subscriptionTitle`，缺失或为空白时回退到
+    /// 原始订阅类型 `type`（如 Q_DEVELOPER_STANDALONE_PRO）。
+    ///
+    /// 部分账号（如企业版 IdC）只返回 `type`；回退后账号才算「订阅已知」，
+    /// 且类型串含 FREE 时仍会被 `supports_opus` 识别为 Free。
+    ///
+    /// 回退只接受能判断等级的类型串（含 FREE / PRO / POWER）。不带等级后缀的裸类型
+    /// （如 `Q_DEVELOPER_STANDALONE`，KAM 示例里对应 Free）无法区分免费与付费，
+    /// 若直接当标题写回，`supports_opus` 的 FREE 关键字判断会把免费号放进 Opus 池；
+    /// 因此按「等级未知」返回 `None`，由调用方走既有的未知等级处理
+    /// （企业版 IdC 租户账号仍由 `is_tenant_idc` 兜底）。
+    pub fn resolved_subscription_title(&self) -> Option<&str> {
+        let info = self.subscription_info.as_ref()?;
+        let title = info
+            .subscription_title
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        title.or_else(|| {
+            info.subscription_type
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| has_tier_marker(s))
+        })
     }
 
     /// 获取第一个使用量明细
@@ -475,6 +507,62 @@ mod tests {
         let resp: UsageLimitsResponse = serde_json::from_str("{}").unwrap();
         assert_eq!(resp.usage_limit(), 0.0);
         assert_eq!(resp.current_usage(), 0.0);
+        assert!(resp.subscription_title().is_none());
+    }
+
+    #[test]
+    fn resolved_subscription_title_prefers_title_then_falls_back_to_type() {
+        let cases = [
+            // (subscriptionInfo JSON, 期望)
+            (
+                r#"{"subscriptionInfo": {"subscriptionTitle": "KIRO PRO", "type": "Q_DEVELOPER_STANDALONE_PRO"}}"#,
+                Some("KIRO PRO"),
+            ),
+            (
+                r#"{"subscriptionInfo": {"subscriptionTitle": "   ", "type": "Q_DEVELOPER_STANDALONE_PRO"}}"#,
+                Some("Q_DEVELOPER_STANDALONE_PRO"),
+            ),
+            (
+                r#"{"subscriptionInfo": {"type": "Q_DEVELOPER_STANDALONE_FREE"}}"#,
+                Some("Q_DEVELOPER_STANDALONE_FREE"),
+            ),
+            (
+                r#"{"subscriptionInfo": {"type": "Q_DEVELOPER_STANDALONE_POWER"}}"#,
+                Some("Q_DEVELOPER_STANDALONE_POWER"),
+            ),
+            // 不带等级后缀的裸类型无法区分免费 / 付费，按等级未知处理
+            (
+                r#"{"subscriptionInfo": {"type": "Q_DEVELOPER_STANDALONE"}}"#,
+                None,
+            ),
+            (
+                r#"{"subscriptionInfo": {"subscriptionTitle": " ", "type": "Q_DEVELOPER_STANDALONE"}}"#,
+                None,
+            ),
+            // 有标题时标题优先，即使类型是裸串
+            (
+                r#"{"subscriptionInfo": {"subscriptionTitle": "KIRO FREE", "type": "Q_DEVELOPER_STANDALONE"}}"#,
+                Some("KIRO FREE"),
+            ),
+            (
+                r#"{"subscriptionInfo": {"subscriptionTitle": "", "type": " "}}"#,
+                None,
+            ),
+            (r#"{"subscriptionInfo": {}}"#, None),
+            ("{}", None),
+        ];
+        for (json, expected) in cases {
+            let resp: UsageLimitsResponse = serde_json::from_str(json).unwrap();
+            assert_eq!(resp.resolved_subscription_title(), expected, "json={json}");
+        }
+    }
+
+    #[test]
+    fn subscription_title_getter_does_not_fall_back_to_type() {
+        // 余额弹窗仍展示原始标题：回退只作用于账号等级写回
+        let resp: UsageLimitsResponse =
+            serde_json::from_str(r#"{"subscriptionInfo": {"type": "Q_DEVELOPER_STANDALONE_PRO"}}"#)
+                .unwrap();
         assert!(resp.subscription_title().is_none());
     }
 

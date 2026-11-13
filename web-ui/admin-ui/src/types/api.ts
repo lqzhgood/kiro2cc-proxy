@@ -250,11 +250,26 @@ export interface ModelItem {
   released_at?: string | null
   /** 官方模型描述；上游未返回或回退静态表时为 null */
   description?: string | null
+  /** 上游声明的输入模态（`TEXT` / `IMAGE`）；上游未返回或回退静态表时为空数组 */
+  input_types?: string[]
 }
 
 export interface ModelsResponse {
   object: string
   data: ModelItem[]
+}
+
+// 对话会话（后端 chat_session.rs；消息结构由前端 playground/types.ts 定义，后端不解析）
+export interface ChatSessionMeta {
+  id: string
+  title: string
+  createdAt: number
+  updatedAt: number
+  messageCount: number
+}
+
+export interface ChatSession<M = unknown> extends Omit<ChatSessionMeta, 'messageCount'> {
+  messages: M[]
 }
 
 // 更新日志（字段名与后端 AdminReleaseNote 结构体保持一致，非 camelCase）

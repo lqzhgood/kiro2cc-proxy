@@ -20,7 +20,8 @@ use crate::anthropic::types::ErrorResponse;
 use super::error::parse_messages_request;
 use super::helpers::{
     extract_client_ip, extract_user_agent, is_suggestion_mode_request,
-    override_thinking_from_model_name, resolve_thinking_enabled, suggestion_mode_response,
+    log_small_request_fingerprint, override_thinking_from_model_name, resolve_thinking_enabled,
+    suggestion_mode_response,
 };
 use super::nonstream::handle_non_stream_request;
 use super::stream::handle_stream_request;
@@ -73,6 +74,7 @@ pub async fn post_messages_cc(
         message_count = %payload.messages.len(),
         "Received POST /cc/v1/messages request"
     );
+    log_small_request_fingerprint(&payload, &headers);
 
     // 检查 KiroProvider 是否可用
     let provider = match &state.kiro_provider {
@@ -104,7 +106,7 @@ pub async fn post_messages_cc(
         .unwrap_or_default();
 
     // 检查是否为 WebSearch 请求
-    if websearch::has_web_search_tool(&payload) {
+    if websearch::has_web_search_tool(&payload) && !websearch::wants_model_driven_search(&headers) {
         tracing::info!("检测到 WebSearch 工具，路由到 WebSearch 处理");
 
         // 估算输入 tokens

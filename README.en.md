@@ -10,7 +10,7 @@
 
 ![Admin Panel](docs/assets/admin-panel.png)
 
-> **✅ Supported Models: Claude Sonnet 5.5 / Claude Sonnet 5 / Claude Sonnet 4.5 / Claude Sonnet 4.6 / Claude Opus 5.5 / Claude Opus 5 / Claude Opus 4.5 / Claude Opus 4.6 / Claude Opus 4.7 / Claude Opus 4.8 / Claude Haiku 5.5 / Claude Haiku 4.5 / DeepSeek 3.2 / GLM-5 / MiniMax M2.1 / MiniMax M2.5 / Qwen3-Coder / Kimi K3 / GPT-5.6 Sol / GPT-5.6 Terra / GPT-5.6 Luna**
+> **✅ Supported Models: Claude Sonnet 5.5 / Claude Sonnet 5 / Claude Sonnet 4.5 / Claude Sonnet 4.6 / Claude Opus 5.5 / Claude Opus 5 / Claude Opus 4.5 / Claude Opus 4.6 / Claude Opus 4.7 / Claude Opus 4.8 / Claude Haiku 5.5 / Claude Haiku 4.5 / Claude Fable 5.1 / DeepSeek 3.2 / GLM-5 / MiniMax M2.1 / MiniMax M2.5 / Qwen3-Coder-Next / Kimi K3 / Grok 4.7 / GPT-5.6 Sol / GPT-5.6 Terra / GPT-5.6 Luna**
 
 ### 📖 Quick Navigation
 
@@ -274,39 +274,76 @@ Press `Ctrl+C` in the PowerShell window, or close the window.
 
 ## 🐧 Server Deployment (Linux)
 
-### Option 1: Docker (Simplest, Recommended)
+### Option 1: Docker Compose + GHCR Prebuilt Image (Recommended)
 
-**Requirements**: Docker and Docker Compose installed on the server.
+Deploy directly with the prebuilt `ghcr.io/tsinhzl/kiro2cc-proxy` image. No repository clone, Rust / Node.js installation, or local compilation is required. Images support `linux/amd64` and `linux/arm64`; Docker automatically selects the matching architecture.
+
+**Requirements**: Docker and Docker Compose (supporting the `docker compose` command) installed on the server, with network access to `ghcr.io`.
+
+#### 1. Create the Deployment Directory
 
 ```bash
-# 1. Clone the repo
-git clone https://github.com/TsinHzl/kiro2cc-proxy.git /opt/kiro2cc-proxy
+mkdir -p /opt/kiro2cc-proxy/data
 cd /opt/kiro2cc-proxy
-
-# 2. Create config file (note: config lives in data/, not data/config/)
-mkdir -p data
-cp config.example.json data/config.json
-nano data/config.json   # Fill in adminPsw
 ```
 
-Minimal `data/config.json`:
+#### 2. Create the Compose File
 
-```json
+Run the following commands to create `docker-compose.yml` in the deployment directory with the default configuration. This overwrites any existing file with the same name; for an existing deployment, back up and preserve your custom configuration instead of running these commands directly.
+
+```bash
+cd /opt/kiro2cc-proxy
+cat > docker-compose.yml <<'EOF'
+services:
+  kiro2cc-proxy:
+    image: ghcr.io/tsinhzl/kiro2cc-proxy:latest
+    container_name: kiro2cc-proxy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "0.0.0.0:5678:5678"
+    volumes:
+      - ./data:/app/config
+    restart: unless-stopped
+EOF
+```
+
+Available image tags:
+
+| Tag | Purpose |
+|-----|---------|
+| `latest` | Image from the most recent release build, for following release updates |
+| `vX.Y.Z` | A published version tag; pin an existing version in production to control upgrades |
+| `beta` | Rolling test image from regular main-branch builds; not recommended for production |
+
+#### 3. Create the Configuration File
+
+Replace `your-admin-password` below with your own strong password before running these commands to create `data/config.json` with the minimal configuration. This overwrites any existing file with the same name; for an existing deployment, preserve the original file instead of running these commands directly.
+
+```bash
+cd /opt/kiro2cc-proxy
+mkdir -p data
+cat > data/config.json <<'EOF'
 {
   "host": "0.0.0.0",
   "port": 5678,
   "region": "us-east-1",
   "adminPsw": "your-admin-password"
 }
+EOF
 ```
 
 > ⚠️ **`port` must be an integer**, not a Docker port-mapping string (e.g. `"0.0.0.0:5678:5678"`). Correct: `"port": 5678`. The service will fail to start if this is wrong.
 
-```bash
-# 3. Create accounts file (or add via admin panel after startup)
-echo "[]" > data/credentials.json
+Keep the container's `host` set to `0.0.0.0` so the service is reachable through Docker's port mapping. The configuration file belongs in the host's `data/` directory, not `data/config/`.
 
-# 4. Start
+If `data/credentials.json` is missing, it is created automatically at startup. You can then add accounts through the admin panel, or place an existing credentials file there before starting. Do not overwrite an existing credentials file with an empty array.
+
+#### 4. Pull the Image and Start
+
+```bash
+cd /opt/kiro2cc-proxy
+docker compose pull
 docker compose up -d
 
 # View logs
@@ -316,22 +353,82 @@ docker compose logs -f
 docker compose down
 ```
 
-Access the admin panel at `http://your-server-ip:5678/admin`.
+Open `http://your-server-ip:5678/admin`, sign in with `adminPsw`, add Kiro accounts, and create an API Key for your clients.
 
-> **Note**: `docker-compose.yml` binds to `5678:5678` (all interfaces) by default. To restrict to localhost only, change `ports` to `"127.0.0.1:5678:5678"`. Also make sure your cloud provider's security group (Tencent Cloud / Alibaba Cloud etc.) has an inbound rule allowing port 5678, otherwise external access will be refused.
+> **Network access**: The mapping above listens on all host IPv4 interfaces. For remote access, allow TCP port 5678 through the firewall and cloud security group as needed, preferably restricting source IPs. Use an HTTPS reverse proxy for public access. For host-only access, change `ports` to `"127.0.0.1:5678:5678"` while keeping the container's `host` set to `0.0.0.0`.
+
+> **Data persistence**: `./data:/app/config` stores configuration, accounts, API Keys, usage records, and other data. Keep the original deployment directory and mount when upgrading or recreating the container, and ensure the directory remains writable. Do not delete or publicly share `data/`.
 
 #### Updating to the Latest Version
+
+Back up the entire `data/` directory before upgrading. When using the `latest` tag, run:
+
+```bash
+cd /opt/kiro2cc-proxy
+docker compose pull
+docker compose up -d
+```
+
+The `pull` command only downloads the image. The subsequent `up -d` recreates the container if the image has changed, preserving mounted data. Neither `git pull` nor a preceding `docker compose down` is required. For a pinned version, first change the `image` tag to the desired published version, then run the commands above.
+
+### Option 2: Repository Clone + Docker Compose
+
+The original repository-clone workflow remains available for users who prefer to reuse the repository's configuration files. It also pulls `ghcr.io/tsinhzl/kiro2cc-proxy:latest` by default, without building the image locally. Prefer the recommended option above if you do not need the repository files.
+
+**Requirements**: Git, Docker, and Docker Compose installed, with access to GitHub and `ghcr.io`.
+
+#### 1. Clone the Repository
+
+These commands are for a new deployment; the target directory should not already exist. For an existing clone, enter its original directory instead. Choose one Docker deployment method rather than mixing initialization steps in the same directory.
+
+```bash
+git clone https://github.com/TsinHzl/kiro2cc-proxy.git /opt/kiro2cc-proxy
+cd /opt/kiro2cc-proxy
+```
+
+#### 2. Create the Configuration File
+
+```bash
+mkdir -p data
+if [ ! -f data/config.json ]; then
+  cp config.example.json data/config.json
+fi
+nano data/config.json
+```
+
+Change `host` from the example's `127.0.0.1` to `0.0.0.0`, set `adminPsw` to your own strong password, and keep the integer port `"port": 5678`. The minimal configuration is the same as in the recommended option above. The file belongs at `data/config.json`, not `data/config/config.json`.
+
+The container automatically creates `data/credentials.json` if it is missing. Add accounts through the admin panel after startup; preserve any existing credentials file instead of overwriting it with an empty array.
+
+#### 3. Start and Manage the Service
+
+```bash
+docker compose pull
+docker compose up -d
+
+# View logs
+docker compose logs -f
+
+# Stop
+docker compose down
+```
+
+Open `http://your-server-ip:5678/admin` and sign in with `adminPsw`. The port access restrictions, HTTPS guidance, and `data/` persistence requirements from the recommended option also apply here.
+
+#### Updating the Repository and Image
+
+Back up the entire `data/` directory before upgrading. If you have modified repository files, review and handle those local changes before updating the repository:
 
 ```bash
 cd /opt/kiro2cc-proxy
 git pull
 docker compose pull
-docker compose down && docker compose up -d
+docker compose up -d
 ```
 
-> Each time a new tag (e.g. `v1.x.x`) is pushed, GitHub Actions automatically builds and pushes a new image to `ghcr.io`. `docker compose pull` fetches the latest `latest` image.
+Skip `git pull` if you only need to update the image. The repository's Compose file defaults to `latest`. If you override `IMAGE_OWNER` / `IMAGE_TAG` through environment variables or `.env`, check the actual image source and tag first. For a pinned version, change `IMAGE_TAG` to the desired published version before pulling and recreating the container.
 
-### Option 2: systemd One-Click Install
+### Option 3: systemd One-Click Install
 
 For running the binary directly without Docker.
 
@@ -357,7 +454,7 @@ systemctl stop kiro2cc-proxy         # Stop
 journalctl -u kiro2cc-proxy -f       # Live logs
 ```
 
-### Option 3: Manual Background Process (No systemd)
+### Option 4: Manual Background Process (No systemd)
 
 ```bash
 bash start_server.sh start     # Start in background
@@ -486,14 +583,16 @@ Lower `priority` value = higher priority. Up to 3 retries per account, 9 per req
 | `loadBalancingMode` | No | `priority` | `priority` (by priority) or `balanced` (round-robin) |
 | `maxRpmPerCredential` | No | `0` | Maximum requests per minute for each account; `0` means unlimited. Saving from the settings page applies it immediately and persists it to `config.json` |
 | `forwardSuggestionMode` | No | `false` | Suggestion Mode input-prediction switch. With the default `false`, the proxy intercepts Claude Code's automatic full-context prediction request after each turn and returns an empty response without Token usage. `true` forwards it upstream to show input suggestions, but each turn incurs one additional full-context billed request. Override with `FORWARD_SUGGESTION_MODE` |
-| `clientTokenPassthrough` | No | `false` | Client token passthrough: `true` reports returned `usage` fields 1:1 with real values; the default `false` displays values scaled by `0.6657`. It supports third-party clients that calculate context usage from returned usage values. Claude Code's auto-compact trigger timing remains unchanged in either mode. Override with `CLIENT_TOKEN_PASSTHROUGH` |
+| `clientTokenPassthrough` | No | `true` | Client token passthrough: `true` (default) reports returned `usage` fields 1:1 with real values; `false` displays values scaled by `0.6657`. It supports third-party clients that calculate context usage from returned usage values. Note: with `true`, Claude Code's auto-compact triggers at about 164K real context (about 246K with `false`); set `false` to keep the legacy trigger timing. Override with `CLIENT_TOKEN_PASSTHROUGH` |
 | `promptCacheAccounting` | No | `false` | Simulate prompt-cache accounting with Anthropic `cache_control` breakpoint rules. With `true`, `cache_read` / `cache_creation` (including the 5m/1h split) are derived from the request's breakpoints, the 20-block lookback window and TTLs, replacing the prefix estimate that counts everything before the last message as cache reads with zero writes. Requests without `cache_control` count as plain input (OpenAI-compatible endpoints use automatic prefix caching). The cache is isolated per API key (similar to Anthropic's workspace-level isolation) and keyed by the mapped Kiro model ID; the table is persisted to `prompt_cache.json` in the config directory and restored on restart. **This is a local simulation: it only brings the downstream billing split closer to Anthropic's accounting and does not reflect Kiro's actual cache hits or real cost (credits remain the source of truth).** Intended for downstream gateways that bill by usage. Override with `PROMPT_CACHE_ACCOUNTING` |
 | `promptCacheMinTokens` | No | `0` | Global override for the minimum cacheable prefix length (tokens). With `0` (default), Anthropic's per-model values apply: 512 for Opus 5.5 / Opus 5 / Sonnet 5.5 / Haiku 5.5 and similar, 2048 for Opus 4.7, 4096 for Opus 4.6 / Opus 4.5 / Haiku 4.5, and 1024 otherwise; a value `> 0` applies to all models. Override with `PROMPT_CACHE_MIN_TOKENS` |
 | `modelsOfficialAliases` | No | `false` | With `true`, `/v1/models` appends official hyphenated aliases after upstream dotted model IDs (e.g. `claude-opus-4.6` → `claude-opus-4-6`, plus dated IDs for the 4.5 generation), for downstream gateways that build model mappings from the list. Off by default to avoid duplicate entries in Claude Code's model picker. Override with `MODELS_OFFICIAL_ALIASES` |
 | `outputTokensIncludeThinking` | No | `false` | With `true`, the `output_tokens` returned to clients include thinking (matching Anthropic's official accounting); the default `false` counts visible output only. Override with `OUTPUT_TOKENS_INCLUDE_THINKING` |
 | `writeChunkingMaxLines` | No | `300` | Line limit of the chunked-writing instruction (see the `Reset(StreamId(1), INTERNAL_ERROR, Remote)` FAQ entry): when a request carries Write / Edit / MultiEdit, the system prompt asks for no more than ~N lines per tool call. Larger saves credits but makes the ~240s upstream stream reset more likely; `0` disables the instruction. Editable in the Admin settings page and hot-applied to subsequent requests. Override with `WRITE_CHUNKING_MAX_LINES` |
 | `thinkingAsText` | No | `true` | Thinking-as-text display for Claude Code only. `true` rewrites thinking blocks into text streamed line by line, similar to Kiro CLI: the terminal entrypoint `cli` uses ANSI dim italic (gray) styling, while other entrypoints such as Claude Desktop and `local-agent` use escape-free Markdown (a blockquote with italic lines) to approximate dimming and avoid `[2m` / `[0m` garbage. This avoids Claude Code appearing stalled while native thinking is folded. In both modes Claude Code's own context contains the thinking content, but it is dropped entirely when history is sent upstream: with the switch off, native thinking blocks are dropped; with it on, the marker line, thinking body and duration line are dropped, so the upstream context never contains thinking (only when the stream is interrupted and the duration line is missing does it conservatively fall back to stripping just the marker line). Override with `THINKING_AS_TEXT` |
+| `thinkingCollapse` | No | `true` | Collapse thinking when done (requires `thinkingAsText`; Claude Code terminal `cli` entrypoint only). `true` keeps the line-by-line live preview, then when the thinking block ends the proxy emits a native thinking block on the same index. Claude Code clears the streaming text preview and lands it as a native collapsible thinking message (collapsed by default, Ctrl+O to expand; the expanded body ends with a "Thought for Ns (N tokens)" line showing duration and thinking tokens, the collapsed label is hardcoded by Claude Code and cannot show it), so the full thinking text no longer stays in the scrollback. Claude Desktop, `local-agent` and other entrypoints hide native thinking by default, so they keep plain text. Can be overridden by the `THINKING_COLLAPSE` environment variable |
 | `showSessionCredits` | No | `false` | Session credits summary line (Claude Code only). `true` appends one line at the end of a reply once a conversation actually ends (`end_turn`; intermediate tool-call steps are skipped), e.g. `▸ Credits: turn 0.86 • session 8.73 \| Time: 12s`, matching Kiro CLI. `turn` is the credits spent in this turn (all requests under one prompt, including tool round-trips), `session` is the running total for the conversation since this was enabled, and `Time` is the turn duration. The upstream `meteringEvent` only reports per-request usage with no running total, so the proxy accumulates per request and resets on restart. Dimmed gray for the `cli` entrypoint, escape-free Markdown italics for other entrypoints. The line is stripped before history is sent upstream, so it never enters the upstream context or `output_tokens`; auxiliary requests without tool definitions (title generation, compaction, etc.) are skipped; non-streaming requests are not supported. Override with `SHOW_SESSION_CREDITS` |
+| `credentialKeepAliveHours` | No | `72` | Account keep-alive interval in hours. Account keep-alive is **always on and has no switch**: a background task periodically refreshes long-idle accounts (including disabled and standby ones) to keep their refreshToken active, and writes the rotated refreshToken back to the credentials file. An account is only kept alive once it was last refreshed longer ago than this value; values below 24 are treated as 24. Accounts are spaced 30-120 seconds apart, at most 5 per hour; failures are not retried and accounts revoked by the server are skipped. **It only mitigates expiry caused by inactivity and cannot extend an absolute server-side session limit (such as IAM Identity Center's 90 days).** Overridable via env var `CREDENTIAL_KEEP_ALIVE_HOURS` |
 | `debugLogs` | No | `false` | DEBUG log switch: when `true`, DEBUG-level events are emitted to the console, the log file (`logFile`) and the Admin Log Viewer page in sync; hot-switchable from the Admin settings page (no restart) and persisted to config.json. Switching it off stops capturing new DEBUG entries while already captured ones are kept. Note the switch reports/saves its own state, not the effective level: when `RUST_LOG` is set its directives still take precedence (the switch only appends a global `debug` directive on top of `RUST_LOG`; target-specific directives are unaffected). Log volume grows significantly — turn it off after troubleshooting. Override with `DEBUG_LOGS` |
 
 > **TLS note**: If you encounter token refresh failures or request errors, try switching `tlsBackend` to `native-tls`.
@@ -511,7 +610,7 @@ Full example:
   "loadBalancingMode": "priority",
   "maxRpmPerCredential": 0,
   "forwardSuggestionMode": false,
-  "clientTokenPassthrough": false,
+  "clientTokenPassthrough": true,
   "thinkingAsText": true,
   "debugLogs": false
 }
@@ -526,6 +625,7 @@ After configuring `adminPsw`, the Admin settings page manages the following opti
 | Suggestion Mode input suggestions | `forwardSuggestionMode` | Applies immediately |
 | Client token passthrough | `clientTokenPassthrough` | Applies immediately |
 | Thinking-as-text display | `thinkingAsText` | Applies immediately to subsequent requests only |
+| Collapse thinking when done | `thinkingCollapse` | Applies immediately to subsequent requests only |
 | Session credits summary line | `showSessionCredits` | Applies immediately to subsequent requests only |
 | DEBUG logs | `debugLogs` | Applies immediately; console / log file / Log Viewer stay in sync |
 | Per-account RPM limit | `maxRpmPerCredential` | Applies immediately; `0` means unlimited |
@@ -774,6 +874,7 @@ Any model name containing the following keywords is automatically mapped to the 
 | `*minimax*` (others) | `minimax-m2.1` |
 | `*qwen*` | `qwen3-coder-next` |
 | `*kimi*` | `kimi-k3` |
+| `*grok*` | `grok-4.7` |
 | `*gpt*` (including terra) | `gpt-5.6-terra` |
 | `*gpt*` (including luna) | `gpt-5.6-luna` |
 | `*gpt*` (including sol, or 5.6/5-6 without a variant name, defaults to the flagship tier) | `gpt-5.6-sol` |
@@ -875,12 +976,15 @@ Set `host` to `0.0.0.0` in `config.json` and ensure your firewall allows the por
 
 **Q: How to update to the latest version (Docker deployment)**
 
+GHCR image deployments do not require source updates. Back up `data/`, then run:
+
 ```bash
 cd /opt/kiro2cc-proxy
-git pull
 docker compose pull
-docker compose down && docker compose up -d
+docker compose up -d
 ```
+
+For a pinned version, first change the `image` tag in `docker-compose.yml` to the desired published version. Keep the original `data/` mount.
 
 **Q: How to update to the latest version (local deployment)**
 
@@ -940,6 +1044,7 @@ Thanks to all the contributors of this project (in no particular order):
 - [fhy12130-afk](https://github.com/fhy12130-afk) — [#50](https://github.com/TsinHzl/kiro2cc-proxy/pull/50)
 - [kosuke-zhang](https://github.com/kosuke-zhang) — [#28](https://github.com/TsinHzl/kiro2cc-proxy/pull/28)
 - [lqzhgood](https://github.com/lqzhgood) — [#37](https://github.com/TsinHzl/kiro2cc-proxy/pull/37), [#35](https://github.com/TsinHzl/kiro2cc-proxy/pull/35), [#33](https://github.com/TsinHzl/kiro2cc-proxy/pull/33)
+- [freefish1218](https://github.com/freefish1218) — [#62](https://github.com/TsinHzl/kiro2cc-proxy/pull/62)
 - [xhsngdsan](https://github.com/xhsngdsan)
 - [zbjincheng](https://github.com/zbjincheng) — [#41](https://github.com/TsinHzl/kiro2cc-proxy/pull/41)
 
