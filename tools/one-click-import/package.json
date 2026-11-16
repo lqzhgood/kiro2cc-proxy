@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test contracts.test.mjs",
+    "test": "node --test contracts.test.mjs json-import.test.mjs",
     "test:browser": "playwright test",
     "verify": "npm test && npm --prefix ../../web-ui/admin-ui run build && npm run test:browser"
   },

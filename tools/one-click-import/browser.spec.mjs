@@ -56,6 +56,43 @@ const input = page => page.getByLabel('手动导入（备用）', { exact: true 
 const open = page => page.getByRole('button', { name: '一键导入', exact: true }).click()
 const focus = page => page.evaluate(() => window.dispatchEvent(new Event('focus')))
 
+test('JSON import validates the entire batch and preserves nickname and email independently', async ({ page }) => {
+  const requests = await setup(page)
+  await page.getByRole('button', { name: 'JSON 导入', exact: true }).click()
+  const jsonInput = page.getByLabel('账户 JSON', { exact: true })
+  const account = { nickname: '工作账号', email: 'name@example.invalid', authMethod: 'idc', provider: 'Enterprise',
+    refreshToken: 'test-only-idc-token', clientId: 'test-client', clientSecret: 'test-secret',
+    profileArn: 'arn:aws:test:profile', authRegion: 'us-east-1', apiRegion: 'us-west-2' }
+  await jsonInput.fill(JSON.stringify([account, { ...account, clientSecret: '' }]))
+  await page.getByRole('button', { name: '确定导入', exact: true }).click()
+  await expect(page.getByRole('alert')).toContainText('账户 2 · clientSecret')
+  expect(requests).toEqual([])
+  await jsonInput.fill(JSON.stringify([account, account]))
+  await page.getByRole('button', { name: '确定导入', exact: true }).click()
+  await expect(page.getByText(/账户 1.*工作账号.*name@example.invalid.*导入成功，已启用/)).toBeVisible()
+  await expect(page.getByText(/账户 2.*账户已存在，已跳过/)).toBeVisible()
+  expect(requests).toEqual([
+    { path: '/api/admin/credentials', body: { ...account, disabled: true, priority: 0 } },
+    { path: '/api/admin/credentials/41/disabled', body: { disabled: false } },
+  ])
+  await expect(jsonInput).toHaveValue('')
+  await page.getByRole('button', { name: '关闭', exact: true }).last().click()
+  await page.getByRole('button', { name: 'JSON 导入', exact: true }).click()
+  await expect(jsonInput).toHaveValue('')
+})
+
+test('JSON file selection waits for confirmation and failed verification keeps the account disabled', async ({ page }) => {
+  const requests = await setup(page, { balanceFails: true })
+  await page.getByRole('button', { name: 'JSON 导入', exact: true }).click()
+  await page.locator('input[type=file]').setInputFiles({ name: 'accounts.json', mimeType: 'application/json', buffer: Buffer.from(exported) })
+  await expect(page.getByLabel('账户 JSON', { exact: true })).toHaveValue(exported)
+  expect(requests).toEqual([])
+  await page.getByRole('button', { name: '确定导入', exact: true }).click()
+  await expect(page.getByText(/已创建但验活失败，保持禁用/)).toBeVisible()
+  expect(requests).toHaveLength(1)
+  expect(requests[0].body.disabled).toBe(true)
+})
+
 test('upstream action bar keeps the KAM button hidden and opens the isolated dialog', async ({ page }, testInfo) => {
   const requests = await setup(page)
   const oldButton = page.locator('button[aria-label="KAM导入账号"]')

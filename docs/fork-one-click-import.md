@@ -12,6 +12,33 @@
 
 手动导入区域作为备用入口保留：可主动粘贴、输入账户 JSON；仅空框时在弹窗内尝试从剪贴板填入。手动输入仍需点击「确定导入」。剪贴板读取依赖 HTTPS/localhost、浏览器支持和权限。
 
+## JSON 导入
+
+账户操作栏的「JSON 导入」支持粘贴或选择一个 `.json` 文件（UTF-8，可带 BOM，最大 2 MB）。内容必须是非空账户数组，点击「确定导入」才发送。支持的字段与现有账户 API 同名：
+
+```json
+[
+  {
+    "nickname": "工作账号",
+    "email": "name@example.com",
+    "authMethod": "idc",
+    "provider": "Enterprise",
+    "refreshToken": "<refreshToken>",
+    "clientId": "<clientId>",
+    "clientSecret": "<clientSecret>",
+    "profileArn": "<profileArn>",
+    "authRegion": "us-east-1",
+    "apiRegion": "us-east-1"
+  }
+]
+```
+
+`refreshToken` 必填；`authMethod` 省略时为 `social`，只接受 `social` / `idc`；`idc` 需要同时填写 `clientId`、`clientSecret`，`social` 不应携带这两个字段。`provider` 可省略，social 支持 `Google` / `GitHub`，idc 支持 `Enterprise`。昵称和邮箱可省略，分别保存，填写邮箱时检查格式。企业账号应提供实际 `profileArn`，两个区域填写账户实际区域。以上文本字段不接受数字、对象或 null；不支持的字段忽略，不透传到接口。
+
+先检查整批结构和字段，错误提示条目编号及字段名；全部通过后逐条创建、验活、启用。重复账户跳过，单条失败继续，已创建但验活失败的账户保持禁用。原始服务端错误不会显示，避免带出凭证。文件选择不会自动提交；完成或关闭弹窗后清空输入。导入在页面中执行，期间应保持页面打开，刷新或离开页面后需到列表核对已创建账户。
+
+独立代码位于 `web-ui/admin-ui/src/features/json-import/`，仅在现有 `credential-action-bar.tsx` 挂载按钮，复用一键导入的 `import-accounts.ts` 和现有账户 API、查询缓存；不改后端、一键导入脚本和上游账户数据结构。测试位于 `tools/one-click-import/json-import.test.mjs`，已接入下文 `npm test`；浏览器用例随现有 CI 执行，本机仍不运行 Playwright。
+
 ## 脚本分发与授权
 
 维护源是 `scripts/fork/get-kiro-info.sh` 和 `scripts/fork/get-kiro-info.ps1`，由 Rust `include_str!` 嵌入二进制，随镜像和二进制发布。Docker 构建必须复制 `scripts/fork`。无需外部下载站、`KIRO_IMPORT_SCRIPT_URL` 或独立 Compose override；旧部署中留下该环境变量也不再生效。
