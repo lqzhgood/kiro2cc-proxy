@@ -56,11 +56,11 @@
 
 ## 隔离边界
 
-- 上游前端接入：`web-ui/admin-ui/src/components/dashboard/credential-action-bar.tsx`，旧 KAM 按钮隐藏，新按钮挂载。原上游弹窗保留。
+- 上游前端接入：`web-ui/admin-ui/src/components/dashboard/credential-action-bar.tsx`，旧 KAM 按钮隐藏，挂载 `OneClickImport` 和 `JsonImport` 两个按钮。原上游弹窗保留。
 - 上游后端接入：`src/admin/mod.rs` 声明模块，`src/admin/router.rs` 合并独立路由；不修改 `AdminState`、账户服务和 token manager。
 - 独立后端：`src/admin/fork_import.rs`，测试 `src/admin/fork_import_tests.rs`。创建会话的路由必须保留管理员鉴权，上传/查询只接受临时授权；脚本公开下载，响应禁止缓存。
-- 独立前端：`web-ui/admin-ui/src/features/one-click-import/`，复用现有 UI、账户 API 和查询缓存。
-- 导入保持「禁用创建 → 查余额验活 → 启用」。已知重复凭证跳过；验活失败保留禁用账户；启用失败明确提示结果未确认，不能自动重建。已接收的后台任务不依赖 HTTP 连接或页面存活。
+- 独立前端：`web-ui/admin-ui/src/features/one-click-import/` 和 `web-ui/admin-ui/src/features/json-import/`，复用现有 UI、账户 API 和查询缓存；JSON 导入共用前者的 `import-accounts.ts` 执行器。
+- 导入保持「禁用创建 → 查余额验活 → 启用」。已知重复凭证跳过；验活失败保留禁用账户；启用失败明确提示结果未确认，不能自动重建。脚本上传已接收的后台任务不依赖 HTTP 连接或页面存活；JSON 和手动备用入口在页面中执行，导入期间需保持页面打开。
 - 测试工具在 `tools/one-click-import/`；不添加业务依赖、不修改上游前端 package.json。
 
 ## 验证
@@ -82,7 +82,7 @@ cargo test admin::fork_import
 
 ## 同步上游
 
-在此仓库对 Codex 说「同步上游并验证一键导入」，或调用 `$kiro-upstream-sync`。技能位于 `.agents/skills/kiro-upstream-sync/SKILL.md`。
+在此仓库对 Codex 说「同步上游并验证导入功能」，或调用 `$kiro-upstream-sync`。技能位于 `.agents/skills/kiro-upstream-sync/SKILL.md`，同时覆盖一键导入和 JSON 导入。
 
 上游是 `TsinHzl/kiro2cc-proxy` 的 `master`，fork 是 `lqzhgood/kiro2cc-proxy`。技能检查上游差异、合并并适配接入点，运行上述回归及受影响的上游检查，最后报告实际验证结果和限制。技能与测试降低遗漏风险，无法保证所有未来上游改动均无冲突或无需人工适配。
 
