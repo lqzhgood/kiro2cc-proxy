@@ -136,8 +136,6 @@ pub struct MessagesRequest {
     #[serde(default, deserialize_with = "deserialize_system")]
     pub system: Option<Vec<SystemMessage>>,
     pub tools: Option<Vec<Tool>>,
-    #[allow(dead_code)]
-    pub tool_choice: Option<serde_json::Value>,
     pub thinking: Option<Thinking>,
     pub output_config: Option<OutputConfig>,
     /// Claude Code 请求中的 metadata，包含 session 信息
@@ -299,4 +297,24 @@ pub struct CountTokensRequest {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CountTokensResponse {
     pub input_tokens: i32,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Claude Code 请求会携带 `tool_choice`，该字段已从 `MessagesRequest` 移除；
+    /// 反序列化必须继续接受并忽略它（若给结构加 `deny_unknown_fields` 会让此用例失败）。
+    #[test]
+    fn messages_request_ignores_unknown_tool_choice() {
+        let body = serde_json::json!({
+            "model": "claude-sonnet-4",
+            "max_tokens": 16,
+            "messages": [{"role": "user", "content": "hi"}],
+            "tool_choice": {"type": "any"}
+        });
+        let req: MessagesRequest = serde_json::from_value(body).unwrap();
+        assert_eq!(req.model, "claude-sonnet-4");
+        assert_eq!(req.messages.len(), 1);
+    }
 }

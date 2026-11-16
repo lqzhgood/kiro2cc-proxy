@@ -151,7 +151,7 @@ async fn main() {
     }
     if config.thinking_as_text && config.thinking_collapse {
         tracing::info!(
-            "思考折叠已开启（thinkingCollapse=true）：cli 入口的思考结束后折叠为原生可折叠 thinking 块（Ctrl+O 展开）"
+            "思考折叠已开启（thinkingCollapse=true）：思考结束后折叠为原生可折叠 thinking 块（cli 入口 Ctrl+O 展开；Claude Desktop 等入口由客户端自身控件展开）"
         );
     }
     if config.client_token_passthrough {
@@ -386,6 +386,10 @@ async fn main() {
                 Ok(store) => admin_state = admin_state.with_chat_session_store(Arc::new(store)),
                 Err(e) => tracing::error!("加载对话会话失败，历史会话功能不可用: {}", e),
             }
+            let ui_prefs_store = Arc::new(model::ui_preferences::UiPreferencesStore::load(
+                throttle_data_dir.join("ui_preferences.json"),
+            ));
+            admin_state = admin_state.with_ui_preferences_store(ui_prefs_store);
             admin_state = admin_state.with_throttle_log_store(throttle_log_store.clone());
             admin_state = admin_state.with_failure_log_store(failure_log_store.clone());
             admin_state = admin_state.with_log_capture(log_capture.clone());

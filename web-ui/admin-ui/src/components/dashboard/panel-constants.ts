@@ -1,7 +1,5 @@
 // Copyright (c) 2026 Harllan He. Licensed under MIT.
 // Dashboard 常量与本地工具（自 dashboard.tsx 拆出，纯代码搬移）
-// 侧栏身份区：后端仅有单一管理员口令，无用户名概念 → 名称固定，头像取首字母
-export const ADMIN_NAME = 'admin'
 
 /**
  * credits 环比的最小昨日基线。
@@ -22,14 +20,11 @@ const ACTION_BTN_BASE =
   'inline-flex h-[31px] items-center gap-1.5 whitespace-nowrap rounded-[7px] border px-[11px] text-[12.5px] font-medium shadow-hair transition-colors [&_svg]:size-[15px] [&_svg]:shrink-0 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand disabled:pointer-events-none disabled:opacity-50'
 /** 常规态（设计稿 .btn） */
 export const ACTION_BTN = `${ACTION_BTN_BASE} border-transparent bg-surface text-ink-2 [&_svg]:text-ink-3 hover:bg-surface-2 hover:text-ink hover:[&_svg]:text-ink-2`
-/** 危险态（设计稿 .btn-danger） */
-export const ACTION_BTN_DANGER = `${ACTION_BTN_BASE} border-transparent bg-surface text-danger [&_svg]:text-danger hover:bg-danger-soft`
 /** 主按钮（设计稿 .btn-primary） */
 export const ACTION_BTN_PRIMARY = `${ACTION_BTN_BASE} border-transparent bg-brand font-semibold text-brand-fg [&_svg]:text-brand-fg [&_svg]:opacity-90 hover:bg-brand-hover`
-/** 竖分隔线（设计稿 .actionbar .vdiv） */
-export const ACTION_VDIV = 'mx-0.5 h-[19px] w-[0.5px] shrink-0 bg-hairline-2'
 
 export const SIDEBAR_COLLAPSED_STORAGE_KEY = 'sidebar-collapsed'
+export const CHAT_SIDEBAR_OPEN_STORAGE_KEY = 'playground:v1:sidebar-open'
 /** 账号表排序持久化：列 key（account/remaining），缺省即默认排序 */
 export const ACCOUNT_SORT_STORAGE_KEY = 'account-sort-key'
 /** 账号表排序持久化：方向（asc/desc），换列/恢复默认时移除 */
@@ -38,5 +33,33 @@ export const ACCOUNT_SORT_STORAGE_KEY_DIR = 'account-sort-dir'
 export const SIDEBAR_TRANSITION_MS = 200
 
 export function readStoredSidebarCollapsed(): boolean {
-  return localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === 'true'
+  try {
+    return localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === 'true'
+  } catch {
+    return false
+  }
+}
+
+export function writeStoredSidebarCollapsed(collapsed: boolean): void {
+  try {
+    localStorage.setItem(SIDEBAR_COLLAPSED_STORAGE_KEY, String(collapsed))
+  } catch {
+    /* localStorage 不可用时仅依赖服务端与内存状态 */
+  }
+}
+
+export function readStoredChatSidebarOpen(): boolean {
+  try {
+    return localStorage.getItem(CHAT_SIDEBAR_OPEN_STORAGE_KEY) !== 'false'
+  } catch {
+    return true
+  }
+}
+
+export function writeStoredChatSidebarOpen(open: boolean): void {
+  try {
+    localStorage.setItem(CHAT_SIDEBAR_OPEN_STORAGE_KEY, String(open))
+  } catch {
+    /* localStorage 不可用时仅依赖服务端与内存状态 */
+  }
 }

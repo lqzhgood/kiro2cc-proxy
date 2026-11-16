@@ -69,7 +69,7 @@ pub struct UsageRecord {
     pub duration_ms: Option<u64>,
     /// 深度思考文案 token 数（客户端实际收到的 thinking 内容；None 表示旧数据
     /// 或该请求未产生 thinking 内容）。流式与非流式均为 BPE 真值（count_tokens），
-    /// 与客户端「Thought for Ns (N tokens)」显示同源同口径
+    /// 与客户端「💭 N tokens」显示同源同口径
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thinking_token_count: Option<i32>,
     /// 请求类型（true = 流式 SSE，false = 非流式；None 表示旧数据）
@@ -189,9 +189,6 @@ pub struct UsageTracker {
 
     /// 升级前已裁剪历史的遗留基数（只读，仅 `reset` 时清除），按 api_key_id 分组
     lifetime_keys: Arc<RwLock<HashMap<u32, LifetimeTotals>>>,
-    /// 遗留基数落盘路径（None = 记忆态，如测试场景）
-    #[allow(dead_code)]
-    lifetime_path: Option<PathBuf>,
     /// 遗留基数脏标记：仅 `reset` 清除基数时置位，由后台任务周期落盘
     lifetime_dirty: Arc<AtomicBool>,
 }
@@ -347,7 +344,6 @@ impl UsageTracker {
             daily,
             dirty_tx: tx,
             lifetime_keys,
-            lifetime_path,
             lifetime_dirty: lifetime_dirty_clone,
         })
     }
@@ -621,14 +617,9 @@ mod pricing;
 #[cfg(test)]
 mod tests;
 
-#[allow(unused_imports)] // 类型归属 daily.rs，经 mod 再导出保持原模块路径
-pub(crate) use daily::{CredentialDaySummary, CredentialRangeSummary, DailySummary};
-#[allow(unused_imports)]
-pub(crate) use pagination::{UsageRecordItem, UsageRecordsPage};
-#[allow(unused_imports)]
 pub(crate) use pricing::{
-    MIN_INFER_INPUT_TOKENS, ModelPricing, get_model_pricing, infer_cache_read_from_credits,
+    MIN_INFER_INPUT_TOKENS, calculate_cost, get_k_ref, infer_cache_read_from_credits,
+    refine_prefix_cache_read,
 };
-pub(crate) use pricing::{calculate_cost, get_k_ref, refine_prefix_cache_read};
 #[cfg(test)]
 pub(crate) use pricing::{credits_for_cache_read, get_claude_credit_rates};

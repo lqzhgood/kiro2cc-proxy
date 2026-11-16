@@ -610,8 +610,8 @@ Kiro 上游的 4 个接入端点（`ide` / `runtime` / `codewhisperer` / `amazon
 | `modelsOfficialAliases` | 否 | `false` | `true` 时 `/v1/models` 为上游点号模型 ID 追加官方连字符别名（如 `claude-opus-4.6` → `claude-opus-4-6`，4.5 代际再追加带日期的 ID），供按模型列表生成映射的下游网关使用；默认关闭，避免 Claude Code 模型选择器出现重复项。可用环境变量 `MODELS_OFFICIAL_ALIASES` 覆盖 |
 | `outputTokensIncludeThinking` | 否 | `false` | `true` 时返回给客户端的 `output_tokens` 包含 thinking（与 Anthropic 官方口径一致）；`false`（默认）只计可见输出。可用环境变量 `OUTPUT_TOKENS_INCLUDE_THINKING` 覆盖 |
 | `writeChunkingMaxLines` | 否 | `300` | 分块写入约束的行数上限（见常见问题中 `Reset(StreamId(1), INTERNAL_ERROR, Remote)` 一条）：请求带 Write / Edit / MultiEdit 工具时，在系统提示末尾要求单次工具调用的参数不超过约 N 行。调大更省 credits 但更易触发上游约 240s 的流重置，`0` 表示不追加约束。可在 Admin 设置页热修改，仅影响之后的新请求。可用环境变量 `WRITE_CHUNKING_MAX_LINES` 覆盖 |
-| `thinkingAsText` | 否 | `true` | 思考内容文本化（仅 Claude Code 客户端）：`true` 时把 thinking 块改写为 markdown 引用文本、逐行流式展示（类似 Kiro CLI；终端入口 `cli` 用 ANSI 变暗斜体样式，Claude Desktop、`local-agent` 等其他入口改用无转义的 Markdown 引用块 + 斜体来近似变暗，避免出现 `[2m` / `[0m` 乱码），解决 CC 默认折叠/隐藏 thinking 导致长推理期间像卡住的问题。两种模式下客户端（Claude Code）上下文都包含思考内容，但回传上游时都会整块丢弃：关闭时丢弃原生 thinking 块，开启时丢弃「💭 Thinking」标记行、思考正文与时长行，上游上下文不含思考内容（仅当流被中断、缺少时长行时，保守降级为只剥标记行）。可用环境变量 `THINKING_AS_TEXT` 覆盖 |
-| `thinkingCollapse` | 否 | `true` | 思考结束后折叠（需同时开启 `thinkingAsText`，仅 Claude Code 终端 `cli` 入口生效）：`true` 时思考过程仍逐行实时显示，思考块结束时代理在同一 index 上补发原生 thinking 块，Claude Code 清空流式文本预览并把它落地为原生可折叠的思考消息（默认折叠，Ctrl+O 展开；展开后正文末尾带「Thought for Ns (N tokens)」耗时与思考 token 数，折叠态标签由 Claude Code 写死，无法显示），滚动区不再残留整段思考文本。Claude Desktop、`local-agent` 等入口的原生 thinking 默认不展示，折叠会让思考内容消失，所以这些入口保持纯文本。可用环境变量 `THINKING_COLLAPSE` 覆盖 |
+| `thinkingAsText` | 否 | `true` | 思考内容文本化（仅 Claude Code 客户端）：`true` 时把 thinking 块改写为 markdown 引用文本、逐行流式展示（类似 Kiro CLI；终端入口 `cli` 用 ANSI 变暗斜体样式，Claude Desktop、`local-agent` 等其他入口改用无转义的 Markdown 引用块 + 斜体来近似变暗，避免出现 `[2m` / `[0m` 乱码），解决 CC 默认折叠/隐藏 thinking 导致长推理期间像卡住的问题。两种模式下客户端（Claude Code）上下文都包含思考内容，但回传上游时都会整块丢弃：关闭时丢弃原生 thinking 块，开启时丢弃「💭 Thinking」标记行、思考正文与统计行，上游上下文不含思考内容（仅当流被中断、缺少统计行时，保守降级为只剥标记行）。可用环境变量 `THINKING_AS_TEXT` 覆盖 |
+| `thinkingCollapse` | 否 | `true` | 思考结束后折叠（需同时开启 `thinkingAsText`，对 Claude Code 终端 `cli` 与 Claude Desktop 等入口生效，已验证 `cli` 与 Claude Desktop；`local-agent` 等其他入口未验证，若思考内容不可见请关闭本项）：`true` 时思考过程仍逐行实时显示，思考块结束时代理在同一 index 上补发原生 thinking 块，Claude Code 清空流式文本预览并把它落地为原生可折叠的思考消息（默认折叠，Ctrl+O 展开；展开后正文末尾带「N tokens」思考 token 数，折叠态标签由 Claude Code 写死，无法显示），滚动区不再残留整段思考文本。Claude Desktop 等入口同样折叠为原生思考块，按客户端自身方式展开。可用环境变量 `THINKING_COLLAPSE` 覆盖 |
 | `showSessionCredits` | 否 | `false` | 会话 credits 汇总行（仅 Claude Code 客户端）：`true` 时，每次对话真正结束（`end_turn`，工具调用中间步骤不显示）会在回复末尾追加一行 `▸ Credits: turn 0.86 • session 8.73 \| Time: 12s`，格式对齐 Kiro CLI。`turn` 为本轮（从你最近一次发送消息起，到 Claude Code 显示 `✻ Brewed for Ns` 为止，含工具往返、子代理请求、Stop hook 拦截后继续的部分）的 credits 之和；Stop hook 拦截收尾时，前一次回复末尾的汇总行只含当时已发生的部分，最后一行才是整轮总和，`session` 为当前会话自开启以来的累计，`Time` 为本轮耗时。上游 `meteringEvent` 只返回单次请求的用量、不带累计值，所以累计由代理逐请求累加，重启服务后清零。终端入口 `cli` 为变暗灰色，其他入口为无转义的 Markdown 斜体。该行回传上游前自动剥离，不进入上游上下文、不计入 `output_tokens`；不带工具定义的辅助请求（标题生成、压缩等）不追加；暂不支持非流式请求。可用环境变量 `SHOW_SESSION_CREDITS` 覆盖 |
 | `credentialKeepAliveHours` | 否 | `72` | 账号保活间隔（小时）。账号保活**始终开启、没有开关**：后台定期刷新长期闲置的账号（含被禁用、备用优先级的账号），让 refreshToken 保持活跃，并把轮换后的新 refreshToken 写回账号文件。账号距上次刷新超过该时间才会被保活，低于 24 按 24 处理；账号之间随机错开 30~120 秒、每小时最多处理 5 个，失败不重试，已被服务端撤销的账号会跳过。**只能缓解因闲置导致的过期，无法延长服务端的绝对会话时限（如 IAM Identity Center 的 90 天）。** 可用环境变量 `CREDENTIAL_KEEP_ALIVE_HOURS` 覆盖 |
 | `debugLogs` | 否 | `false` | DEBUG 日志开关：`true` 时控制台、日志文件（`logFile`）与 Admin「查看日志」页三处同步输出 DEBUG 级别事件，可在 Admin 设置页热切换（无需重启）并写回 config.json；关闭后停止捕获新的 DEBUG，已捕获的记录保留。注意该开关返回/保存的是开关状态而非实际生效档位：设置 `RUST_LOG` 环境变量时，其指令仍优先（开关仅在 `RUST_LOG` 基础上追加全局 `debug` 指令，target 定向指令不受影响）。日志量会显著增加，排障后建议关闭。可用环境变量 `DEBUG_LOGS` 覆盖 |
@@ -991,6 +991,17 @@ lsof -ti:5678 | xargs kill -9
 
 输出过长被截断导致，调低客户端的 `max_tokens` 上限。
 
+**Q：Claude Code 开启 Auto 权限模式后，Credits 消耗变多了**
+
+这是 Claude Code 客户端自身的行为，不是代理的问题。Auto 模式优先使用 Anthropic 官方服务端的分类器；连接第三方端点（包括本代理）时收不到服务端分类结果，客户端会在该会话内回退到**本地分类器**，并在每次执行敏感工具（如运行命令）前额外发起 1~2 次非流式 `/v1/messages` 请求，用来判断该操作是否放行。代理与处理普通请求一样将其转发给 Kiro 上游，因此会产生正常的 Credits 计费。
+
+这类请求的特征是 `tools` 为空、`max_tokens` 为 64 或 8192、末条 user 消息以 `<transcript>` 开头，可在 `[small-req]` 诊断日志中看到。分类器默认使用 Sonnet 档位模型，与主对话所用模型无关。
+
+代理不会拦截或伪造这些请求的结果，因为那等于替用户放行所有命令，绕过 Auto 模式的安全判断。可选的降低开销办法：
+
+- 在客户端设置环境变量 `CLAUDE_CODE_AUTO_MODE_MODEL=claude-haiku-4.5`，让分类器使用费率更低的模型。该变量只对客户端本地分类器生效。**注意：Claude Desktop 的 Code 标签页目前会忽略此变量**（见 [anthropics/claude-code#105288](https://github.com/anthropics/claude-code/issues/105288)），分类器仍会使用会话模型。
+- 在完全信任的项目中改用 `Bypass Permissions` 模式，不再触发分类请求。该模式不做任何安全检查，请自行评估风险。
+
 **Q：局域网内其他设备无法访问**
 
 将 `config.json` 中的 `host` 改为 `0.0.0.0`，确认防火墙已开放对应端口。
@@ -1071,13 +1082,14 @@ MIT
 
 **致谢**——以下 Issue 直接推动了关键修复：
 
-- [NoahNyy](https://github.com/NoahNyy) — [#58](https://github.com/TsinHzl/kiro2cc-proxy/issues/58), [#57](https://github.com/TsinHzl/kiro2cc-proxy/issues/57)
+- [NoahNyy](https://github.com/NoahNyy) — [#66](https://github.com/TsinHzl/kiro2cc-proxy/issues/66), [#58](https://github.com/TsinHzl/kiro2cc-proxy/issues/58), [#57](https://github.com/TsinHzl/kiro2cc-proxy/issues/57)
 - [jayus71](https://github.com/jayus71) — [#56](https://github.com/TsinHzl/kiro2cc-proxy/issues/56), [#52](https://github.com/TsinHzl/kiro2cc-proxy/issues/52)
 - [aidenli](https://github.com/aidenli) — [#54](https://github.com/TsinHzl/kiro2cc-proxy/issues/54)
-- [AX10MER](https://github.com/AX10MER) — [#47](https://github.com/TsinHzl/kiro2cc-proxy/issues/47)
+- [AX10MER](https://github.com/AX10MER) — [#67](https://github.com/TsinHzl/kiro2cc-proxy/issues/67), [#47](https://github.com/TsinHzl/kiro2cc-proxy/issues/47)
 - [C2Y-cyber](https://github.com/C2Y-cyber) — [#46](https://github.com/TsinHzl/kiro2cc-proxy/issues/46)
 - [XiaoZhuiWang](https://github.com/XiaoZhuiWang) — [#40](https://github.com/TsinHzl/kiro2cc-proxy/issues/40)
 - [SunNorthGod](https://github.com/SunNorthGod) — [#9](https://github.com/TsinHzl/kiro2cc-proxy/issues/9), [#8](https://github.com/TsinHzl/kiro2cc-proxy/issues/8)
 - [RecordingTheSmile](https://github.com/RecordingTheSmile) — [#44](https://github.com/TsinHzl/kiro2cc-proxy/issues/44)
+- [zbjincheng](https://github.com/zbjincheng) — [#70](https://github.com/TsinHzl/kiro2cc-proxy/issues/70), [#59](https://github.com/TsinHzl/kiro2cc-proxy/issues/59)
 
 > 感谢每一位提交 Issue、反馈建议和参与讨论的用户，是你们让这个项目不断完善。

@@ -27,6 +27,8 @@ import type {
   ChatSessionMeta,
   ReleaseNotesResponse,
   DumpFilesResponse,
+  UiPreferences,
+  UpdateUiPreferencesRequest,
 } from '@/types/api'
 
 // 创建 axios 实例
@@ -281,12 +283,6 @@ export async function getAllUsage(): Promise<UsageSummary[]> {
   return data
 }
 
-// 获取单个 API Key 用量
-export async function getKeyUsage(id: number): Promise<UsageSummary> {
-  const { data } = await api.get<UsageSummary>(`/api-keys/${id}/usage`)
-  return data
-}
-
 // 重置单个 API Key 用量
 export async function resetKeyUsage(id: number): Promise<SuccessResponse> {
   const { data } = await api.delete<SuccessResponse>(`/api-keys/${id}/usage`)
@@ -494,5 +490,17 @@ export async function getGeoBatch(
     '/geo/batch',
     { params: { ips: ips.join(',') } }
   )
+  return data
+}
+
+// ============ UI 界面偏好 ============
+
+export async function getUiPreferences(): Promise<UiPreferences> {
+  const { data } = await api.get<UiPreferences>('/ui-preferences')
+  return data
+}
+
+export async function updateUiPreferences(payload: UpdateUiPreferencesRequest): Promise<UiPreferences> {
+  const { data } = await api.put<UiPreferences>('/ui-preferences', payload)
   return data
 }
