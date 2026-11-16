@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# get-kiro-info.sh —— 导出本机 Kiro IDE 账户凭证，供「一键导入」使用
+# get-kiro-info.sh —— 导出或直接上传本机 Kiro IDE 账户凭证，供「一键导入」使用
 #
 #   get    从 ~/.aws/sso/cache 读取当前登录凭证，拼成批量导入 JSON 并复制到剪贴板
 #   set    配置 Claude Code / Codex CLI 指向 kiro-proxy（尚未实现）
@@ -131,10 +131,17 @@ GET_EMAIL=""
 GET_EMAIL_GIVEN=0
 GET_PRINT_STDOUT=1
 GET_OUT_FILE=""
+IMPORT_ORIGIN=""
+IMPORT_TOKEN=""
 
 parse_get_args() {
     while [ $# -gt 0 ]; do
         case "$1" in
+            --server-origin|--import-token)
+                [ $# -ge 2 ] || die "$1 需要一个参数"
+                if [ "$1" = "--server-origin" ]; then IMPORT_ORIGIN="$2"; else IMPORT_TOKEN="$2"; fi
+                shift 2
+                ;;
             --email)
                 [ $# -ge 2 ] || die "--email 需要一个参数"
                 GET_EMAIL="$2"; GET_EMAIL_GIVEN=1; shift 2
@@ -168,6 +175,7 @@ parse_get_args() {
 # 邮箱宽松校验：含 @ 且无空白
 email_looks_valid() {
     case "$1" in
+        *@*@*) return 1 ;;
         *[[:space:]]*) return 1 ;;
         ?*@?*)         return 0 ;;
         *)             return 1 ;;
@@ -183,7 +191,7 @@ prompt_email() {
 
     while true; do
         printf '请输入该账户的邮箱: ' > /dev/tty
-        IFS= read -r input < /dev/tty || input=""
+        IFS= read -r input < /dev/tty || die "邮箱输入已取消"
 
         if [ -z "$input" ]; then
             printf '  邮箱不能为空，请重新输入。\n' > /dev/tty
@@ -218,6 +226,7 @@ CLIENT_REG_VIA_FALLBACK=0
 find_client_reg() {
     local hash="$1" candidate f cid csec
 
+    case "$hash" in *[!a-zA-Z0-9_-]*) return 1 ;; esac
     if [ -n "$hash" ]; then
         candidate="$SSO_CACHE_DIR/$hash.json"
         if [ -f "$candidate" ] && jvalid "$candidate"; then
@@ -229,6 +238,9 @@ find_client_reg() {
             fi
         fi
     fi
+
+    # Direct upload must never select another account's registration by modification time.
+    [ -z "$IMPORT_ORIGIN" ] || return 1
 
     # 兜底：按修改时间从新到旧扫描（文件名是 40 位 hex，无空格风险）
     for f in $(ls -t "$SSO_CACHE_DIR"/*.json 2>/dev/null); do
@@ -342,6 +354,14 @@ print(json.dumps([acct], indent=4, ensure_ascii=False))
 cmd_get() {
     parse_get_args "$@"
 
+    if [ -n "$IMPORT_ORIGIN$IMPORT_TOKEN" ]; then
+        case "$IMPORT_ORIGIN" in http://?*|https://?*) : ;; *) die "无效的服务器地址" ;; esac
+        case "$IMPORT_ORIGIN" in *[[:space:]]*|*\?*|*\#*|*@*) die "无效的服务器地址" ;; esac
+        [ "${#IMPORT_TOKEN}" -eq 64 ] || die "无效的导入授权，请从管理页重新复制命令"
+        case "$IMPORT_TOKEN" in *[!a-f0-9]*) die "无效的导入授权" ;; esac
+        [ -z "$GET_OUT_FILE" ] || die "直接导入不能同时写出凭证文件"
+    fi
+
     [ "$(uname -s)" = "Darwin" ] || die "当前导出脚本仅支持 macOS，请在已登录 Kiro IDE 的 Mac 上运行"
 
     info "读取 Kiro IDE 本地凭证"
@@ -365,12 +385,13 @@ cmd_get() {
     # kiro-proxy 侧的 authMethod 取值是小写 social / idc
     F_AUTH_METHOD="$(printf '%s' "$raw_auth_method" | tr '[:upper:]' '[:lower:]')"
     [ -n "$F_AUTH_METHOD" ] || F_AUTH_METHOD="idc"
+    case "$F_AUTH_METHOD" in social|idc) : ;; *) die "当前登录方式不受支持，请使用手动导入" ;; esac
 
     F_AUTH_REGION="${raw_region:-$DEFAULT_REGION}"
     F_API_REGION="$F_AUTH_REGION"
 
     # --- profileArn 兜底：token 文件里没有就翻 Kiro IDE 日志 ---
-    if [ -z "$F_PROFILE_ARN" ]; then
+    if [ -z "$F_PROFILE_ARN" ] && [ -z "$IMPORT_ORIGIN" ]; then
         if find_profile_arn_in_logs; then
             step "profileArn: ${PROFILE_ARN_LOG_FILE}（token 文件里没有，取自日志）"
         else
@@ -434,6 +455,11 @@ cmd_get() {
     # --- 构造 JSON ---
     local payload
     payload="$(build_json)"
+
+    if [ -n "$IMPORT_ORIGIN" ]; then
+        upload_account "$payload"
+        return
+    fi
 
     echo
     info "账户信息"
@@ -505,6 +531,40 @@ cmd_get() {
     printf '%s\n' '============================================================'
 }
 
+# Only status codes are printed; credentials are neither copied nor written in upload mode.
+response_status() {
+    case "$JSON_TOOL" in
+        jq) jq -er '.status | select(type == "string")' 2>/dev/null ;;
+        python3) python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])' 2>/dev/null ;;
+    esac
+}
+
+upload_account() {
+    local payload="$1" response status attempts=0
+    local endpoint="${IMPORT_ORIGIN%/}/api/admin/fork/import-session"
+    command -v curl >/dev/null 2>&1 || die "需要 curl 上传账户"
+    step "正在导入到 ${IMPORT_ORIGIN}"
+    # A lost POST response is ambiguous: query the same grant, never create another account.
+    response="$(printf '%s' "$payload" | curl -fsS --connect-timeout 10 --max-time 30 -H "x-kiro-import-token: $IMPORT_TOKEN" -H 'Content-Type: application/json' --data-binary @- -- "$endpoint" 2>/dev/null)" || response=""
+    while [ "$attempts" -lt 300 ]; do
+        status="$(printf '%s' "$response" | response_status)" || status=""
+        case "$status" in
+            success) ok "导入成功，已启用（$F_EMAIL）"; return ;;
+            duplicate) ok "账户已存在，已跳过"; return ;;
+            failed) die "导入失败，请检查登录状态后重新生成命令" ;;
+            unverified) die "已导入但验活失败，账户保持禁用，请到列表检查" ;;
+            activationUnknown) die "已导入并验活，启用结果未确认，请到列表检查" ;;
+            awaiting) die "尚未接收到账户，请重新运行同一命令；授权过期则重新生成" ;;
+            running|'') : ;;
+            *) die "无法确认导入结果，请到管理页检查" ;;
+        esac
+        attempts=$((attempts + 1))
+        sleep 2
+        response="$(curl -fsS --connect-timeout 10 --max-time 15 -H "x-kiro-import-token: $IMPORT_TOKEN" -- "$endpoint" 2>/dev/null)" || die "无法查询导入结果（网络中断或授权过期），请到管理页检查，不要重复创建账户"
+    done
+    die "等待超时，后台任务可能仍在运行，请到管理页检查"
+}
+
 # =====================================================================
 # set —— 骨架，具体能力待实现
 # =====================================================================
@@ -567,11 +627,12 @@ $SCRIPT_NAME —— Kiro 账户凭证导出 / 客户端配置工具（仅 macOS�
   $SCRIPT_NAME set <cc|codex|all>
 
 get —— 读取本机 Kiro IDE 登录凭证，拼成 kiro-proxy 批量导入所需的 JSON
-        并复制到剪贴板。只读磁盘，不会刷新 token、不会影响 IDE 登录状态。
+        并复制到剪贴板；直传模式则上传至当前站点。本地只读缓存，服务端负责刷新及验活。
 
   --email <地址>   直接指定邮箱，跳过交互提示（必须含 @）
   --stdout         兼容选项，默认已在结尾打印完整 JSON 和剪贴板复制结果
   --out <文件>     同时写入文件（权限 600）
+  --server-origin <地址> --import-token <授权>  直接上传，不输出或复制凭证
   -h, --help       显示本帮助
 
 set —— 把 Claude Code / Codex CLI 指向 kiro-proxy

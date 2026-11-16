@@ -34,3 +34,18 @@ jobs:
           python-version: '3.x'
       - run: bash -n scripts/fork/get-kiro-info.sh
       - run: python3 tools/one-click-import/test_export.py
+      - run: python3 tools/one-click-import/test_upload.py
+        env:
+          KIRO_TEST_PLATFORM: macos
+  windows-script:
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - run: python tools/one-click-import/test_upload.py
+        env:
+          KIRO_TEST_PLATFORM: windows
+          KIRO_TEST_POWERSHELL: powershell

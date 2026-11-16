@@ -2,23 +2,32 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { parseAccounts } from '../../web-ui/admin-ui/src/features/one-click-import/parse.ts'
 import { importAccounts } from '../../web-ui/admin-ui/src/features/one-click-import/import-accounts.ts'
-import { buildExportCommand } from '../../web-ui/admin-ui/src/features/one-click-import/command.ts'
+import { buildImportCommand } from '../../web-ui/admin-ui/src/features/one-click-import/command.ts'
 
 const social = { refreshToken: 'test-only-social-token', authMethod: 'social', profileArn: 'arn:aws:test:profile', email: 'test@example.invalid', authRegion: 'us-east-1', apiRegion: 'us-east-1' }
 const idc = { ...social, authMethod: 'idc', clientId: 'test-client', clientSecret: 'test-secret', machineId: 'a'.repeat(64) }
 
-test('export command uses only valid runtime configuration, without a default address', () => {
-  for (const value of [null, undefined, '', {}, 'file:///tmp/export.sh', 'javascript:alert(1)', 'https://user:password@example.invalid/a', 'https://example.invalid/a\nb']) {
-    assert.equal(buildExportCommand(value), null)
+const grant = 'a'.repeat(64)
+test('commands derive script and upload destinations from the page origin, including port', () => {
+  for (const os of ['macos', 'windows']) {
+    const command = buildImportCommand('https://example.invalid:8443/admin/?ignored=yes', grant, os)
+    assert.ok(command.includes(`https://example.invalid:8443/api/admin/fork/scripts/${os}`))
+    assert.ok(command.includes("'https://example.invalid:8443'"))
+    assert.ok(command.includes(grant))
+    assert.ok(!command.includes('ignored'))
+    assert.ok(!command.includes('--stdout'))
   }
-  const command = buildExportCommand('https://example.invalid/export.sh')
-  assert.ok(command.includes("curl -fsSL -- 'https://example.invalid/export.sh'"))
-  assert.ok(command.endsWith('get --stdout'))
+  assert.ok(buildImportCommand('http://localhost:5678', grant, 'macos').includes('bash -c'))
+  assert.ok(buildImportCommand('https://example.invalid', grant, 'windows').includes('MaximumRedirection 0'))
 })
 
-test('runtime URL is shell-quoted even when it contains apostrophes or substitutions', () => {
-  const command = buildExportCommand("https://example.invalid/a'$(id)")
-  assert.ok(command.includes("'https://example.invalid/a'\\''$(id)'"))
+test('commands reject unsafe URLs and grants before constructing shell code', () => {
+  for (const value of ['', 'file:///tmp/a', 'javascript:alert(1)', 'https://u:p@example.invalid/a']) {
+    assert.equal(buildImportCommand(value, grant, 'macos'), null)
+  }
+  for (const token of ['', 'x'.repeat(64), "$(id)", "a'bad"]) {
+    assert.equal(buildImportCommand('https://example.invalid', token, 'windows'), null)
+  }
 })
 
 test('accepts the script social/idc arrays, trims fields, and preserves API fields', () => {

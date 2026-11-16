@@ -1,5 +1,0 @@
-# Fork-only runtime settings. Values belong in the server's ignored .env file.
-services:
-  kiro2cc-proxy:
-    environment:
-      KIRO_IMPORT_SCRIPT_URL: ${KIRO_IMPORT_SCRIPT_URL:-}

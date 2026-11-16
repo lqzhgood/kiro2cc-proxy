@@ -2,52 +2,56 @@
 
 ## 使用
 
-管理页的「一键导入」提供 macOS 命令、命令复制、账户 JSON 输入和确定导入。运行命令需要本机 Kiro IDE 已登录、`curl`、Bash，以及 `jq` 或 `python3`；按终端提示输入邮箱。脚本末尾输出完整账户 JSON，并且仅在 `pbcopy` 成功时显示「已复制到剪贴板」。失败时仍可复制终端中的 JSON。
+管理员在管理页打开「一键导入」，选择 macOS 或 Windows，复制命令到已登录 Kiro IDE 的电脑执行。终端要求填写邮箱，用于区分账户，然后自动上传当前登录账户，不再复制或粘贴凭证。
 
-弹窗打开期间，页面重新获得焦点或变为可见时尝试读取剪贴板。仅合法账户 JSON 且输入为空时填入。拒绝读取后停止自动重试，可点击「从剪贴板粘贴」重试，也可手动粘贴。HTTPS/localhost 和浏览器权限是自动读取的前提，Firefox/Safari 等浏览器可能仍要求主动粘贴。关闭弹窗清空信息；点击确定才提交给当前代理，不会在浏览器中执行脚本。
+- macOS：Bash、curl，以及 jq 或 python3。
+- Windows：Windows PowerShell 5.1 或 PowerShell 7，使用系统自带 JSON/HTTP 能力，无需 Git Bash，也不修改系统执行策略。
+- 只读取当前用户 `~/.aws/sso/cache/kiro-auth-token.json`，IdC 必须有 `clientIdHash` 对应的注册文件。直接导入不扫描其他账户注册文件，不支持 Kiro CLI 或 external_idp。
+- 邮箱必填；machineId 存在时读取，缺失的 profileArn 交由现有后端处理。
+- 终端显示成功、重复或失败阶段，不输出凭证、不写凭证文件、不改剪贴板。打开的管理页轮询结果并刷新账户列表；关闭页面不取消已被服务端接收的任务。
 
-原 KAM 按钮保留在 DOM 中并使用 `display: none` 隐藏。原导入弹窗及其上游状态链保持原样。
+手动导入区域作为备用入口保留：可主动粘贴、输入账户 JSON；仅空框时在弹窗内尝试从剪贴板填入。手动输入仍需点击「确定导入」。剪贴板读取依赖 HTTPS/localhost、浏览器支持和权限。
 
-## 发布脚本
+## 脚本分发与授权
 
-维护源文件是 `scripts/fork/get-kiro-info.sh`，基于用户提供的脚本修订。将该文件发布到自己的下载地址，并只在部署环境中设置 `KIRO_IMPORT_SCRIPT_URL`。下面是无效的占位示例，不是实际部署地址：
+维护源是 `scripts/fork/get-kiro-info.sh` 和 `scripts/fork/get-kiro-info.ps1`，由 Rust `include_str!` 嵌入二进制，随镜像和二进制发布。Docker 构建必须复制 `scripts/fork`。无需外部下载站、`KIRO_IMPORT_SCRIPT_URL` 或独立 Compose override；旧部署中留下该环境变量也不再生效。
 
-`https://example.invalid/get-kiro-info.sh`
+前端用 `window.location.origin` 获取协议、域名和端口，生成同站点下载及上传命令。当前支持既有根路径部署（管理页 `/admin/`，API `/api/admin`），不新增任意反向代理子路径支持。脚本下载不跟随重定向；HTTPS 使用正常证书校验。生产环境应沿用 HTTPS，HTTP 会明文传输导入凭证和账户信息。
 
-真实地址不得写入源码、测试、文档、提交信息或 Vite 构建变量。运行时通过受管理员鉴权保护的 `/api/admin/fork/import-config` 返回，响应禁止缓存；没有合法配置时不提供默认地址，手动导入仍可用。地址不会编译进前端静态资源或镜像，但登录管理员为执行命令仍能看到地址。
+独立接口位于 `/api/admin/fork/`：
 
-本仓库不会自动发布外部脚本。弹窗命令下载成功后再运行，并带 `get --stdout`；发布与真实 Mac 运行需要单独验收。
+- `POST import-sessions`：仅现有管理员鉴权通过后创建授权，10 分钟内可提交一个账户。
+- `GET scripts/macos`、`GET scripts/windows`：返回项目内的脚本，不含任何账户或授权信息。
+- `POST import-session`：通过 `x-kiro-import-token` 校验临时授权，接受单个账户对象或单元素数组，限制 2 MB，校验邮箱、字段类型与 Social/IdC 配对，并按白名单构造请求。
+- `GET import-session`：同一临时授权查询状态，不返回凭证。重复 POST 只返回该任务状态，不重复创建。
+
+临时授权不放进 URL，不包含管理员密码。授权、任务结果只保存在单实例内存，最多保留 64 个未过期或运行中的会话；后台运行期间可继续查询，完成结果保留 10 分钟。服务重启后授权失效，需先检查账户列表再生成新命令。命令中的临时授权在有效期内仍具备一次导入权限，勿发给他人。
 
 ## 隔离边界
 
-- 上游前端接入：`web-ui/admin-ui/src/components/dashboard/credential-action-bar.tsx`，新组件导入、旧按钮隐藏样式、新按钮挂载共三处。
-- 上游后端接入：`src/admin/mod.rs` 声明独立的 `fork_import` 模块；`src/admin/router.rs` 在管理员鉴权范围内注册配置路由。实现和测试均位于新文件 `src/admin/fork_import.rs`，不修改现有账户接口。
-- 独立实现：`web-ui/admin-ui/src/features/one-click-import/`。文案也在模块中，避免修改上游全局语言文件。
-- `parse.ts` 只接受账户对象或非空数组，限制 2 MB、校验字符串字段和 Social/IdC 一致性，按白名单构造请求。
-- `import-accounts.ts` 保存「禁用创建 → 查余额验活 → 启用」契约，跳过已知重复账户。验活失败保留禁用账户；启用响应失败提示结果未确认，不重复创建。
-- 账户 API、查询缓存、哈希和对话框基础组件由上游提供；不通过 DOM 搜索或构建时打补丁替换功能。
-- 测试工具放在 `tools/one-click-import/`，有独立锁文件，不修改上游前端 package.json。仅使用虚构账户和 mock API，不访问真实 Kiro 凭据或提交真实账户。
+- 上游前端接入：`web-ui/admin-ui/src/components/dashboard/credential-action-bar.tsx`，旧 KAM 按钮隐藏，新按钮挂载。原上游弹窗保留。
+- 上游后端接入：`src/admin/mod.rs` 声明模块，`src/admin/router.rs` 合并独立路由；不修改 `AdminState`、账户服务和 token manager。
+- 独立后端：`src/admin/fork_import.rs`，测试 `src/admin/fork_import_tests.rs`。创建会话的路由必须保留管理员鉴权，上传/查询只接受临时授权；脚本公开下载，响应禁止缓存。
+- 独立前端：`web-ui/admin-ui/src/features/one-click-import/`，复用现有 UI、账户 API 和查询缓存。
+- 导入保持「禁用创建 → 查余额验活 → 启用」。已知重复凭证跳过；验活失败保留禁用账户；启用失败明确提示结果未确认，不能自动重建。已接收的后台任务不依赖 HTTP 连接或页面存活。
+- 测试工具在 `tools/one-click-import/`；不添加业务依赖、不修改上游前端 package.json。
 
 ## 验证
 
-需要 Node.js 24+、npm、Python 3 和 Bash。
+本机不运行 Playwright 浏览器回归（用户已明确禁止，原因和边界见升级技能）。不要使用 `npm run verify`，它会间接启动浏览器。可执行：
 
 ```sh
-npm --prefix web-ui/admin-ui install
-npm --prefix tools/one-click-import ci
-cd tools/one-click-import
-npx playwright install chromium
-npm run verify
-cd ../..
-python3 tools/one-click-import/test_export.py
-npm --prefix web-ui/user-ui install
+npm --prefix tools/one-click-import test
+npm --prefix web-ui/admin-ui run build
 npm --prefix web-ui/user-ui run build
+python3 tools/one-click-import/test_export.py
+python3 tools/one-click-import/test_upload.py
 cargo test admin::fork_import
 ```
 
-Windows 可设置 `KIRO_TEST_BROWSER=chrome` 使用已安装的 Chrome；用 `KIRO_TEST_BASH` 指定 Git Bash 路径，然后用 `python` 运行脚本测试。测试通过 `KIRO_EXPORT_ROOT` 指向临时假数据目录，并模拟剪贴板，避免访问真实账户或覆盖真实剪贴板。Rust 检查前需先构建两套上游前端，满足静态资源嵌入要求。
+需要 Node.js 24+、Python、Bash 和 PowerShell。Windows 用 `python`，通过 `KIRO_TEST_BASH` 指定 Git Bash，`KIRO_TEST_POWERSHELL` 指定 PowerShell；仅检查一种脚本时可设置 `KIRO_TEST_PLATFORM=macos` 或 `windows`。上传测试只读取临时合成缓存并向回环 HTTP stub 发送虚构账户；macOS 分支在非 Mac 上会模拟 Darwin 与 machineId 路径，不代表真实 Mac 验收。
 
-独立 CI 为 `.github/workflows/fork-import.yml`：Linux 运行解析/流程测试、管理端构建和 Chromium 界面回归；macOS 运行脚本回归。浏览器权限提示和真实 Mac 的终端/剪贴板交互还应在发布前手动验收一次。
+独立 CI `.github/workflows/fork-import.yml` 在 Linux 运行 Node/前端/浏览器回归，在 macOS 运行导出和上传脚本回归，在 Windows PowerShell 5.1 运行上传回归。上游 Rust CI 构建两套前端后覆盖后端测试。浏览器回归保留在 CI，不能在本机执行。真实 IDE 登录、终端交互和实际代理部署仍需发布验收。
 
 ## 同步上游
 
@@ -65,15 +69,14 @@ Windows 可设置 `KIRO_TEST_BROWSER=chrome` 使用已安装的 Chrome；用 `KI
 
 首次使用 fork 时确认 GitHub 仓库 Actions 已启用。镜像需要构建成功才能拉取；GHCR 包若为私有，服务器需有读取权限并登录，或者在包设置中将其公开。Docker 发布与 `Fork one-click import` 测试是独立工作流，部署前应确认两者对同一提交都成功。
 
-服务器继续使用原来的 Compose 和数据目录即可。当前仓库的 Compose 支持 `IMAGE_OWNER` / `IMAGE_TAG`，在**原部署目录**的 `.env` 中添加或修改下面三项，保留已有其他配置：
+服务器继续使用原来的 Compose 和数据目录即可。当前仓库的 Compose 支持 `IMAGE_OWNER` / `IMAGE_TAG`，在**原部署目录**的 `.env` 中添加或修改下面两项，保留已有其他配置：
 
 ```dotenv
 IMAGE_OWNER=lqzhgood
 IMAGE_TAG=beta
-KIRO_IMPORT_SCRIPT_URL=https://example.invalid/get-kiro-info.sh
 ```
 
-将示例 URL 换为自己的真实地址；`.env` 已被 Git 忽略，不要强制加入暂存区。将本 fork 的 `docker-compose.override.yml` 放到同一部署目录，它会把该变量传入容器。已有 override 文件时仅合并其中的 `environment` 配置。使用默认 `docker compose` 命令会读取 override；如果显式指定 `-f`，需要同时指定基础文件和 override。只有 `.env` 而没有对应 environment 配置，不会自动把变量传入容器。
+不再需要 `KIRO_IMPORT_SCRIPT_URL` 或本 fork 旧版的 `docker-compose.override.yml`。若已有 override 还包含其他部署设置，保留这些设置；无需为本功能新增环境变量。沿用现有数据挂载和配置，不重新初始化账户数据。
 
 如果服务器使用较旧的 Compose 文件，`image` 没有引用这两个变量，则将该服务的镜像改为 `ghcr.io/lqzhgood/kiro2cc-proxy:beta`；沿用原端口与 `./data:/app/config` 挂载。
 
@@ -93,6 +96,6 @@ docker compose logs --tail=100 kiro2cc-proxy
 
 需要固定发布版本或回滚时，将 `IMAGE_TAG` 从 `beta` 改为已成功构建的 `beta-<提交号前6位>`，再执行 pull/up。部署前记录旧镜像标签或 digest 并备份数据；跨版本数据格式变化时，回滚镜像还应核对数据兼容性。
 
-脚本下载站点的发布仍需单独完成。远程管理页若使用普通 HTTP，自动剪贴板读取通常不可用；使用 HTTPS 或手动粘贴。
+脚本与当前服务版本一起更新，不再单独发布下载站点。正式部署使用 HTTPS；手动备用入口的剪贴板权限限制不影响脚本直接上传。
 
 参考：[Compose 环境变量](https://docs.docker.com/compose/how-tos/environment-variables/variable-interpolation/)、[compose pull](https://docs.docker.com/reference/cli/docker/compose/pull/)、[compose up](https://docs.docker.com/reference/cli/docker/compose/up/)。

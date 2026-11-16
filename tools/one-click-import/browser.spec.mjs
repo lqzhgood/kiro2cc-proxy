@@ -1,9 +1,9 @@
 import { test, expect } from '@playwright/test'
 
 const exported = JSON.stringify([{ refreshToken: 'fake-token-for-browser-test', authMethod: 'social', email: 'test@example.invalid', profileArn: 'arn:aws:test:profile', authRegion: 'us-east-1', apiRegion: 'us-east-1' }])
-const scriptUrl = 'https://example.invalid/kiro/get-kiro-info.sh'
+const grant = 'a'.repeat(64)
 
-async function setup(page, { clipboard = 'not account data', denied = false, delayed = false, balanceFails = false, activationFails = false, unsupported = false, existingHashes = [], configUrl = scriptUrl, configFails = false } = {}) {
+async function setup(page, { clipboard = 'not account data', denied = false, delayed = false, balanceFails = false, activationFails = false, unsupported = false, existingHashes = [], grantToken = grant, configFails = false, statuses = ['awaiting'] } = {}) {
   const mutations = []
   await page.addInitScript(({ clipboard, denied, delayed, unsupported }) => {
     localStorage.setItem('adminPsw', 'test-only-api-key')
@@ -23,16 +23,20 @@ async function setup(page, { clipboard = 'not account data', denied = false, del
   await page.route('**/api/admin/**', async route => {
     const request = route.request()
     const path = new URL(request.url()).pathname
-    if (request.method() === 'POST') {
+    if (path.endsWith('/fork/import-sessions')) {
+      expect(request.headers()['x-api-key']).toBe('test-only-api-key')
+      await route.fulfill({ status: configFails ? 500 : 200, json: { token: grantToken, expiresIn: 600 } })
+    } else if (path.endsWith('/fork/import-session')) {
+      expect(request.headers()['x-kiro-import-token']).toBe(grant)
+      const status = statuses.length > 1 ? statuses.shift() : statuses[0]
+      await route.fulfill({ status: status === 'expired' ? 401 : 200, json: { status } })
+    } else if (request.method() === 'POST') {
       mutations.push({ path, body: request.postDataJSON() })
       if (path.endsWith('/disabled') && activationFails) {
         await route.fulfill({ status: 500, json: { error: { message: 'test activation error' } } })
       } else {
         await route.fulfill({ json: { success: true, credentialId: 41 } })
       }
-    } else if (path.endsWith('/fork/import-config')) {
-      expect(request.headers()['x-api-key']).toBe('test-only-api-key')
-      await route.fulfill({ status: configFails ? 500 : 200, json: { scriptUrl: configUrl } })
     } else if (path.endsWith('/credentials')) {
       await route.fulfill({ json: { total: existingHashes.length, available: 0, currentId: 0, credentials: existingHashes.map((hash, i) => ({ id: i + 1, disabled: true, refreshTokenHash: hash, priority: 0, healthStatus: 'disabled', successCount: 0 })) } })
     } else if (path.endsWith('/balance')) {
@@ -48,7 +52,7 @@ async function setup(page, { clipboard = 'not account data', denied = false, del
   return mutations
 }
 
-const input = page => page.getByLabel('2. 粘贴账户信息', { exact: true })
+const input = page => page.getByLabel('手动导入（备用）', { exact: true })
 const open = page => page.getByRole('button', { name: '一键导入', exact: true }).click()
 const focus = page => page.evaluate(() => window.dispatchEvent(new Event('focus')))
 
@@ -58,11 +62,14 @@ test('upstream action bar keeps the KAM button hidden and opens the isolated dia
   await expect(oldButton).toHaveCount(1)
   await expect(oldButton).toHaveCSS('display', 'none')
   await open(page)
-  await expect(page.getByText('仅支持 macOS · 需要 jq 或 python3')).toBeVisible()
+  await page.getByLabel('本机操作系统').selectOption('macos')
   await page.getByRole('button', { name: '复制命令', exact: true }).click()
   const [command] = await page.evaluate(() => window.testClipboard.writes)
-  expect(command).toContain(scriptUrl)
-  expect(command).toContain('get --stdout')
+  expect(command).toContain(new URL(page.url()).origin + '/api/admin/fork/scripts/macos')
+  expect(command).toContain('--import-token')
+  expect(command).not.toContain('test-only-api-key')
+  await page.getByLabel('本机操作系统').selectOption('windows')
+  await expect(page.getByLabel('1. 在本机终端执行', { exact: true })).toHaveValue(/Invoke-WebRequest/)
   await expect(input(page)).toHaveValue('')
   expect(requests).toEqual([])
   await expect(page.getByRole('button', { name: '确定导入', exact: true })).toBeInViewport()
@@ -70,21 +77,21 @@ test('upstream action bar keeps the KAM button hidden and opens the isolated dia
 })
 
 for (const [state, options, message] of [
-  ['missing', { configUrl: null }, /服务器尚未配置有效的脚本地址/],
-  ['invalid', { configUrl: 'file:///tmp/export.sh' }, /服务器尚未配置有效的脚本地址/],
-  ['unavailable', { configFails: true }, /无法获取导出命令/],
+  ['missing', { grantToken: null }, /无法生成导入命令/],
+  ['invalid', { grantToken: 'invalid' }, /无法生成导入命令/],
+  ['unavailable', { configFails: true }, /无法生成导入命令/],
 ]) {
-  test(`runtime configuration ${state} disables command copying but preserves manual import`, async ({ page }) => {
+  test(`import authorization ${state} disables command copying but preserves manual import`, async ({ page }) => {
     const configRequests = []
     page.on('request', request => {
-      if (request.url().endsWith('/fork/import-config')) configRequests.push(request)
+      if (request.url().endsWith('/fork/import-sessions')) configRequests.push(request)
     })
     await setup(page, options)
     expect(configRequests).toHaveLength(0)
     await open(page)
     await expect(page.getByRole('status').filter({ hasText: message })).toBeVisible()
     await expect(page.getByRole('button', { name: '复制命令', exact: true })).toBeDisabled()
-    await expect(page.getByLabel('1. 在 Mac 终端执行', { exact: true })).toHaveValue('')
+    await expect(page.getByLabel('1. 在本机终端执行', { exact: true })).toHaveValue('')
     await input(page).fill(exported)
     await page.getByRole('button', { name: '确定导入', exact: true }).click()
     await expect(page.getByText(/导入成功，已启用/)).toBeVisible()
@@ -184,7 +191,7 @@ test('dialog fits a narrow viewport', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 390, height: 844 })
   await setup(page)
   await open(page)
-  await expect(page.getByLabel('1. 在 Mac 终端执行', { exact: true })).toHaveValue(new RegExp('example\\.invalid'))
+  await expect(page.getByLabel('1. 在本机终端执行', { exact: true })).toHaveValue(/\/api\/admin\/fork\/scripts\//)
   const box = await page.getByRole('dialog').boundingBox()
   expect(box.x).toBeGreaterThanOrEqual(0)
   expect(box.x + box.width).toBeLessThanOrEqual(390)
@@ -192,4 +199,25 @@ test('dialog fits a narrow viewport', async ({ page }, testInfo) => {
   expect(box.y + box.height).toBeLessThanOrEqual(844)
   await expect(page.getByRole('button', { name: '确定导入', exact: true })).toBeInViewport()
   await page.screenshot({ path: testInfo.outputPath('dialog-mobile.png') })
+})
+
+test('direct import polls status, refreshes accounts and never submits through the manual API', async ({ page }) => {
+  let credentialReads = 0
+  page.on('request', request => {
+    if (request.method() === 'GET' && new URL(request.url()).pathname === '/api/admin/credentials') credentialReads++
+  })
+  const requests = await setup(page, { statuses: ['awaiting', 'running', 'success'] })
+  const before = credentialReads
+  await open(page)
+  await expect(page.getByRole('status').filter({ hasText: '导入成功，已启用' })).toBeVisible({ timeout: 10000 })
+  await expect.poll(() => credentialReads).toBeGreaterThan(before)
+  expect(requests).toEqual([])
+})
+
+test('expired grants clear the command and offer regeneration', async ({ page }) => {
+  await setup(page, { statuses: ['expired'] })
+  await open(page)
+  await expect(page.getByText(/授权已过期或服务已重启/)).toBeVisible()
+  await expect(page.getByRole('button', { name: '复制命令', exact: true })).toBeDisabled()
+  await expect(page.getByRole('button', { name: '重新生成命令', exact: true })).toBeEnabled()
 })

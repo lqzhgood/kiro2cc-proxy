@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useQueryClient } from '@tanstack/react-query'
 import { ClipboardPaste, Copy, Download, Loader2 } from 'lucide-react'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
@@ -9,7 +10,8 @@ import { sha256Hex } from '@/lib/hash'
 import { ImportInputError, parseAccounts } from './parse'
 import { importAccounts, type ImportResult } from './import-accounts'
 import { messages } from './messages'
-import { loadExportCommand } from './runtime-config'
+import { createImportSession, getImportStatus, type ImportSession, type SessionResult } from './runtime-config'
+import { buildImportCommand, type ImportPlatform } from './command'
 
 const outlinedButtonClassName = 'border-ink-3 bg-surface-2 shadow-none hover:border-ink-2 hover:bg-surface-3 focus-visible:ring-2'
 
@@ -41,7 +43,13 @@ function ImportDialog({ onClose }: { onClose: () => void }) {
   const [results, setResults] = useState<ImportResult[]>([])
   const [notice, setNotice] = useState('')
   const [copyNotice, setCopyNotice] = useState('')
-  const [command, setCommand] = useState('')
+  const [session, setSession] = useState<ImportSession | null>(null)
+  const [generation, setGeneration] = useState(0)
+  const [platform, setPlatform] = useState<ImportPlatform>(navigator.platform.startsWith('Win') ? 'windows' : 'macos')
+  const [remoteResult, setRemoteResult] = useState<SessionResult | null>(null)
+  const [pollError, setPollError] = useState(false)
+  const queryClient = useQueryClient()
+  const command = session ? buildImportCommand(window.location.origin, session.token, platform) ?? '' : ''
   const [configStatus, setConfigStatus] = useState<'loading' | 'ready' | 'missing' | 'error'>('loading')
   const [error, setError] = useState('')
   const commandRef = useRef<HTMLTextAreaElement>(null)
@@ -51,15 +59,48 @@ function ImportDialog({ onClose }: { onClose: () => void }) {
 
   useEffect(() => {
     const controller = new AbortController()
-    void loadExportCommand(controller.signal).then(value => {
+    setSession(null)
+    setRemoteResult(null)
+    setConfigStatus('loading')
+    setCopyNotice('')
+    void createImportSession(controller.signal).then(value => {
       if (controller.signal.aborted) return
-      setCommand(value ?? '')
-      setConfigStatus(value ? 'ready' : 'missing')
+      setSession(value)
+      setConfigStatus('ready')
     }).catch(() => {
       if (!controller.signal.aborted) setConfigStatus('error')
     })
     return () => controller.abort()
-  }, [])
+  }, [generation])
+
+  useEffect(() => {
+    if (!session) return
+    const controller = new AbortController()
+    let timer: ReturnType<typeof setTimeout>
+    const poll = async () => {
+      try {
+        const result = await getImportStatus(session.token, controller.signal)
+        if (controller.signal.aborted) return
+        setPollError(false)
+        if (!result) {
+          setSession(null)
+          setConfigStatus('missing')
+          return
+        }
+        setRemoteResult(result)
+        if (result.status !== 'awaiting' && result.status !== 'running') {
+          void queryClient.invalidateQueries({ queryKey: ['credentials'] })
+          return
+        }
+      } catch {
+        if (controller.signal.aborted) return
+        setPollError(true)
+      }
+      timer = setTimeout(() => void poll(), 2000)
+    }
+    void poll()
+    return () => { controller.abort(); clearTimeout(timer) }
+  }, [session, queryClient])
 
   const changeInput = useCallback((value: string) => {
     revision.current++
@@ -159,16 +200,22 @@ function ImportDialog({ onClose }: { onClose: () => void }) {
         <section className="space-y-2">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h3 className="text-sm font-semibold">{text.step1}</h3>
-            <span className="rounded bg-surface-3 px-2 py-1 text-xs text-ink-3">{text.macOnly}</span>
+            <select aria-label={text.platform} value={platform} onChange={event => { setPlatform(event.target.value as ImportPlatform); setCopyNotice('') }} className="rounded border border-hairline-2 bg-surface-2 px-2 py-1 text-sm">
+              <option value="macos">macOS · Terminal</option>
+              <option value="windows">Windows · PowerShell</option>
+            </select>
           </div>
           <p className="text-xs leading-relaxed text-ink-3">{text.commandHint}</p>
           <div className="flex flex-wrap justify-end gap-2">
+            <Button type="button" variant="outline" size="sm" className={outlinedButtonClassName} disabled={configStatus === 'loading' || remoteResult?.status === 'running'} onClick={() => setGeneration(value => value + 1)}>{text.regenerate}</Button>
             <Button type="button" variant="outline" size="sm" className={outlinedButtonClassName} disabled={!command} onClick={() => void copyCommand()}><Copy className="h-4 w-4" />{text.copy}</Button>
           </div>
           <textarea ref={commandRef} aria-label={text.step1} value={command} placeholder={configStatus === 'loading' ? text.configLoading : text.configMissing} readOnly spellCheck={false} rows={6} className="w-full resize-none rounded-md border border-hairline-2 bg-surface-2 p-3 font-mono text-xs leading-relaxed sm:h-24" />
           {configStatus === 'missing' && <p role="status" className="text-xs text-ink-3">{text.configMissing}</p>}
           {configStatus === 'error' && <p role="status" className="text-xs text-ink-3">{text.configError}</p>}
           {copyNotice && <p role="status" className="text-xs text-ink-3">{copyNotice}</p>}
+          {remoteResult && <p role="status" className="text-sm">{text[remoteResult.status]}</p>}
+          {pollError && <p role="status" className="text-xs text-ink-3">{text.pollError}</p>}
         </section>
         <section className="space-y-2">
           <label htmlFor="one-click-import-data" className="block text-sm font-semibold">{text.step2}</label>
