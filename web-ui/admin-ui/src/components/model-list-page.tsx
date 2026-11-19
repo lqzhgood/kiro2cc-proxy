@@ -6,7 +6,7 @@ import { Boxes, Copy, Download, Loader2, RotateCw, SearchX } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { FootSep, Metric, MetricFoot, MetricValue, MetricsBar } from '@/components/metrics'
 import { PageHead } from '@/components/page-head'
-import { SearchBox, Segmented, Toolbar, UpdatedAgo } from '@/components/toolbar'
+import { SearchBox, UpdatedAgo } from '@/components/toolbar'
 import { CELL, ICON_BTN, PANEL, PANEL_FOOT, TH_BASE } from '@/components/table-kit'
 import { TAG_BASE } from '@/components/api-key-row'
 import { useModels } from '@/hooks/use-credentials'
@@ -86,8 +86,6 @@ const RATE_STATUS: Readonly<Record<RateStatus, { cls: string; pip: string; label
   missing: { cls: 'border-transparent bg-warn-soft text-warn', pip: 'bg-warn', labelKey: 'models.statusRateMissing' },
 }
 
-type ModelFilter = 'all' | RateStatus
-
 /** 指标卡脚注最多列出的家族数 */
 const FAMILY_PREVIEW = 3
 const EXPORT_FILE_NAME = 'kiro2cc-models.json'
@@ -150,7 +148,6 @@ export function ModelListPage() {
   const { t } = useTranslation()
   const { data, isLoading, refetch, dataUpdatedAt } = useModels()
   const [query, setQuery] = useState('')
-  const [filter, setFilter] = useState<ModelFilter>('all')
 
   const models = data?.data ?? []
   const allRange = rateRange(models)
@@ -172,11 +169,9 @@ export function ModelListPage() {
   }
 
   const q = query.trim().toLowerCase()
-  const filtered = models.filter((m) => {
-    const hitQuery = q === '' || m.id.toLowerCase().includes(q) || m.display_name.toLowerCase().includes(q)
-    const status: RateStatus = m.rate_multiplier != null ? 'synced' : 'missing'
-    return hitQuery && (filter === 'all' || filter === status)
-  })
+  const filtered = models.filter(
+    (m) => q === '' || m.id.toLowerCase().includes(q) || m.display_name.toLowerCase().includes(q),
+  )
   // 序号跨家族连续（设计稿 01…19），故按筛选后的平铺顺序预先编号
   const serials = new Map(filtered.map((m, i) => [m.id, i + 1]))
   const groups = groupByFamily(filtered)
@@ -321,7 +316,13 @@ export function ModelListPage() {
       </MetricsBar>
 
       {/* 操作条（设计稿 .actionbar）：「调整倍率」「映射规则」依赖未实现的后端写接口，不渲染 */}
-      <div className="flex flex-wrap items-center gap-[7px] pt-[15px]">
+      <div className="flex flex-wrap items-center gap-[7px] pb-[11px] pt-[15px]">
+        <SearchBox
+          value={query}
+          onChange={setQuery}
+          placeholder={t('models.searchPlaceholder')}
+          clearLabel={t('models.searchClear')}
+        />
         <Button variant="outline" onClick={handleRefresh} disabled={isLoading}>
           <RotateCw className={isLoading ? 'animate-spin' : ''} aria-hidden="true" />
           {t('models.refreshList')}
@@ -334,32 +335,8 @@ export function ModelListPage() {
           <Download aria-hidden="true" />
           {t('models.exportJson')}
         </Button>
-      </div>
-
-      <Toolbar>
-        <SearchBox
-          value={query}
-          onChange={setQuery}
-          placeholder={t('models.searchPlaceholder')}
-          clearLabel={t('models.searchClear')}
-        />
-        <Segmented
-          value={filter}
-          onChange={setFilter}
-          groupLabel={t('models.filterGroupLabel')}
-          options={[
-            { key: 'all', label: t('models.filterAll'), count: models.length },
-            { key: 'synced', label: t('models.filterSynced'), count: syncedCount, pipClass: 'bg-ok' },
-            {
-              key: 'missing',
-              label: t('models.filterMissing'),
-              count: models.length - syncedCount,
-              pipClass: 'bg-warn',
-            },
-          ]}
-        />
         <UpdatedAgo dataUpdatedAt={dataUpdatedAt} />
-      </Toolbar>
+      </div>
 
       <section className={`flex min-h-0 flex-1 flex-col ${PANEL}`}>
         <div className="min-h-0 flex-1 overflow-auto">

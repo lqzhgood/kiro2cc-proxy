@@ -38,6 +38,7 @@ pub(crate) use handlers::kiro_body_dump_enabled;
 pub(crate) use handlers::set_kiro_body_dump_enabled;
 pub use handlers::set_models_official_aliases;
 pub use router::create_router_with_provider_and_state;
+pub(crate) use stream::{NO_CREDITS_FOOTER_HEADER, strip_credits_footer};
 pub use stream::{
     client_token_passthrough_enabled, set_client_token_passthrough,
     set_output_tokens_include_thinking, set_show_session_credits, set_thinking_as_text,

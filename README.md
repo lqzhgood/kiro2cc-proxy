@@ -14,7 +14,7 @@
 
 ### 📖 快速导航
 
-[🚀 快速开始](#-快速开始新手必读) ・ [🍎 macOS 部署](#-本地部署macos) ・ [🪟 Windows 部署](#-本地部署windows) ・ [🐧 Linux 部署](#-服务器部署linux) ・ [🔑 获取账号](#-获取-kiro-账号) ・ [⚙️ 配置详解](#️-配置详解) ・ [🤖 接入 Claude Code](#-接入-claude-code) ・ [🧬 接入 Codex CLI](#-接入-codex-cli--openai-sdk) ・ [🔌 API 端点](#-api-端点) ・ [🗺️ 模型映射](#️-模型映射) ・ [🛡️ Admin 面板](#️-admin-管理面板) ・ [❓ 常见问题](#-常见问题) ・ [⚠️ 注意事项](#️-注意事项)
+[🚀 快速开始](#-快速开始新手必读) ・ [📦 预编译包部署](#-预编译包部署) ・ [🍎 macOS 部署](#-本地部署macos) ・ [🪟 Windows 部署](#-本地部署windows) ・ [🐧 Linux 部署](#-服务器部署linux) ・ [🔑 获取账号](#-获取-kiro-账号) ・ [⚙️ 配置详解](#️-配置详解) ・ [🤖 接入 Claude Code](#-接入-claude-code) ・ [🧬 接入 Codex CLI](#-接入-codex-cli--openai-sdk) ・ [🔌 API 端点](#-api-端点) ・ [🗺️ 模型映射](#️-模型映射) ・ [🛡️ Admin 面板](#️-admin-管理面板) ・ [❓ 常见问题](#-常见问题) ・ [⚠️ 注意事项](#️-注意事项)
 
 ---
 
@@ -62,6 +62,91 @@ kiro2cc-proxy 是一个代理服务。它把标准的 Anthropic Claude API 请�
 ```
 安装依赖 → 构建项目 → 启动服务 → 填入账号 → 配置客户端
 ```
+
+> 💡 不想安装 Node.js / Rust 工具链？可直接下载 [预编译包](#-预编译包部署)，跳过前两步。
+
+---
+
+## 📦 预编译包部署
+
+适用于 **macOS（Apple Silicon / Intel）** 与 **Windows x64**。不想安装 Node.js 与 Rust 工具链时，直接从 [Releases](https://github.com/TsinHzl/kiro2cc-proxy/releases/latest) 下载对应平台压缩包即可。
+
+> ⚠️ 包内**只有 `kiro2cc-proxy` 可执行文件本体**：仓库里的启动脚本（`run-local-service-mac.sh` / `run-local-service-windows.ps1`）及其配置向导都不在包内，配置文件需按下面步骤手动创建。
+
+### 第一步：下载对应平台包
+
+| 平台 | 文件 |
+|---|---|
+| macOS Apple Silicon（M 系列） | `kiro2cc-proxy-vX.Y.Z-macOS-arm64.tar.gz` |
+| macOS Intel | `kiro2cc-proxy-vX.Y.Z-macOS-x64.tar.gz` |
+| Windows x64 | `kiro2cc-proxy-vX.Y.Z-Windows-x64.zip` |
+
+不确定芯片类型时执行 `uname -m`：输出 `arm64` 选 Apple Silicon 包，输出 `x86_64` 选 Intel 包。
+
+完整性校验（可选）：同页下载 `checksums-sha256.txt` 后执行
+
+```bash
+# macOS / Linux（macOS 自带 shasum，没有 sha256sum）
+shasum -a 256 -c checksums-sha256.txt
+```
+
+```powershell
+# Windows PowerShell
+Get-FileHash .\kiro2cc-proxy-vX.Y.Z-Windows-x64.zip -Algorithm SHA256
+```
+
+### 第二步：解压并赋予执行权限
+
+```bash
+# macOS
+mkdir -p ~/kiro2cc && cd ~/kiro2cc
+tar -xzf ~/Downloads/kiro2cc-proxy-vX.Y.Z-macOS-arm64.tar.gz
+chmod +x kiro2cc-proxy
+xattr -d com.apple.quarantine kiro2cc-proxy 2>/dev/null   # 未签名二进制需去掉隔离标记，否则可能被 Gatekeeper 拦截
+```
+
+Windows：解压 zip 后双击 `kiro2cc-proxy.exe`，或在 PowerShell 中执行 `.\kiro2cc-proxy.exe`。
+
+### 第三步：创建 `config.json`
+
+预编译包启动时**不会生成配置文件**。`config.json` 不存在时按内置默认值运行：监听 `127.0.0.1:8080`、`adminPsw` 为空；**此时 `/admin`、`/api/admin`、`/api/user` 都不会挂载，打开管理面板会 404**。所以在启动前先创建：
+
+```bash
+cat > config.json <<'EOF'
+{
+  "port": 8080,
+  "adminPsw": "替换为你的管理密码",
+  "proxyUrl": "http://127.0.0.1:7890"
+}
+EOF
+```
+
+- `proxyUrl` 填本地代理端口（Clash / V2Ray 等「开魔法」端口）。国内用户不配置将无法访问 Claude 模型。
+- 配置文件与运行时状态都按**当前工作目录**读写；换目录启动需用 `--config <路径> --credentials <路径>` 显式指定。
+- 也可以改用环境变量覆盖（`PORT`、`ADMIN_PSW`、`PROXY_URL` 等），见 [配置详解](#️-配置详解)。
+
+### 第四步：填入 Kiro 账号
+
+- 方式一：启动服务后打开 `http://127.0.0.1:8080/admin`，在账号管理页用「KAM 导入账号」粘贴或拖入 KAM 导出的 JSON。
+- 方式二：直接创建 `credentials.json`，格式见 [credentials.json 格式](#credentialsjson-格式)。
+
+### 第五步：启动并接入客户端
+
+```bash
+./kiro2cc-proxy           # macOS
+.\kiro2cc-proxy.exe       # Windows PowerShell
+```
+
+前台运行，`Ctrl+C` 停止。客户端接入见 [接入 Claude Code](#-接入-claude-code) 与 [接入 Codex CLI](#-接入-codex-cli--openai-sdk)。
+
+### 与仓库脚本方式的差异
+
+| 项 | 仓库脚本 | 预编译包 |
+|---|---|---|
+| 配置向导 | 有，首次启动交互式创建 | 无，需手写 `config.json` |
+| 配置文件位置 | 仓库内 `app/config/` | 当前工作目录 |
+| 默认端口 | 5678 | 8080 |
+| 前置依赖 | Node.js + Rust（需先构建前端与二进制） | 无，仅需可执行文件 |
 
 ---
 
@@ -612,7 +697,7 @@ Kiro 上游的 4 个接入端点（`ide` / `runtime` / `codewhisperer` / `amazon
 | `writeChunkingMaxLines` | 否 | `300` | 分块写入约束的行数上限（见常见问题中 `Reset(StreamId(1), INTERNAL_ERROR, Remote)` 一条）：请求带 Write / Edit / MultiEdit 工具时，在系统提示末尾要求单次工具调用的参数不超过约 N 行。调大更省 credits 但更易触发上游约 240s 的流重置，`0` 表示不追加约束。可在 Admin 设置页热修改，仅影响之后的新请求。可用环境变量 `WRITE_CHUNKING_MAX_LINES` 覆盖 |
 | `thinkingAsText` | 否 | `true` | 思考内容文本化（仅 Claude Code 客户端）：`true` 时把 thinking 块改写为 markdown 引用文本、逐行流式展示（类似 Kiro CLI；终端入口 `cli` 用 ANSI 变暗斜体样式，Claude Desktop、`local-agent` 等其他入口改用无转义的 Markdown 引用块 + 斜体来近似变暗，避免出现 `[2m` / `[0m` 乱码），解决 CC 默认折叠/隐藏 thinking 导致长推理期间像卡住的问题。两种模式下客户端（Claude Code）上下文都包含思考内容，但回传上游时都会整块丢弃：关闭时丢弃原生 thinking 块，开启时丢弃「💭 Thinking」标记行、思考正文与统计行，上游上下文不含思考内容（仅当流被中断、缺少统计行时，保守降级为只剥标记行）。可用环境变量 `THINKING_AS_TEXT` 覆盖 |
 | `thinkingCollapse` | 否 | `true` | 思考结束后折叠（需同时开启 `thinkingAsText`，对 Claude Code 终端 `cli` 与 Claude Desktop 等入口生效，已验证 `cli` 与 Claude Desktop；`local-agent` 等其他入口未验证，若思考内容不可见请关闭本项）：`true` 时思考过程仍逐行实时显示，思考块结束时代理在同一 index 上补发原生 thinking 块，Claude Code 清空流式文本预览并把它落地为原生可折叠的思考消息（默认折叠，Ctrl+O 展开；展开后正文末尾带「N tokens」思考 token 数，折叠态标签由 Claude Code 写死，无法显示），滚动区不再残留整段思考文本。Claude Desktop 等入口同样折叠为原生思考块，按客户端自身方式展开。可用环境变量 `THINKING_COLLAPSE` 覆盖 |
-| `showSessionCredits` | 否 | `false` | 会话 credits 汇总行（仅 Claude Code 客户端）：`true` 时，每次对话真正结束（`end_turn`，工具调用中间步骤不显示）会在回复末尾追加一行 `▸ Credits: turn 0.86 • session 8.73 \| Time: 12s`，格式对齐 Kiro CLI。`turn` 为本轮（从你最近一次发送消息起，到 Claude Code 显示 `✻ Brewed for Ns` 为止，含工具往返、子代理请求、Stop hook 拦截后继续的部分）的 credits 之和；Stop hook 拦截收尾时，前一次回复末尾的汇总行只含当时已发生的部分，最后一行才是整轮总和，`session` 为当前会话自开启以来的累计，`Time` 为本轮耗时。上游 `meteringEvent` 只返回单次请求的用量、不带累计值，所以累计由代理逐请求累加，重启服务后清零。终端入口 `cli` 为变暗灰色，其他入口为无转义的 Markdown 斜体。该行回传上游前自动剥离，不进入上游上下文、不计入 `output_tokens`；不带工具定义的辅助请求（标题生成、压缩等）不追加；暂不支持非流式请求。可用环境变量 `SHOW_SESSION_CREDITS` 覆盖 |
+| `showSessionCredits` | 否 | `false` | 会话 credits 汇总行（所有客户端，含 Codex CLI 等 OpenAI 兼容调用）：`true` 时，每次对话真正结束（`end_turn`，工具调用中间步骤不显示）会在回复末尾追加一行 `▸ Credits: turn 0.86 • session 8.73 \| Time: 12s`，格式对齐 Kiro CLI。`turn` 为本轮（从你最近一次发送消息起，到 Claude Code 显示 `✻ Brewed for Ns` 为止，含工具往返、子代理请求、Stop hook 拦截后继续的部分）的 credits 之和；Stop hook 拦截收尾时，前一次回复末尾的汇总行只含当时已发生的部分，最后一行才是整轮总和，`session` 为当前会话自开启以来的累计，`Time` 为本轮耗时。上游 `meteringEvent` 只返回单次请求的用量、不带累计值，所以累计由代理逐请求累加，重启服务后清零。Claude Code 终端入口 `cli` 为变暗灰色，其他入口与非 Claude Code 客户端为无转义的 Markdown 斜体。该行回传上游前自动剥离，不进入上游上下文、不计入 `output_tokens`；Claude Code 不带工具定义的辅助请求（标题生成、压缩等）不追加；带 `json_schema` 的结构化输出请求对所有客户端都不追加；其他客户端的流式请求即使不带工具也会追加（其流式的标题生成等辅助请求也会带上该行）；暂不支持非流式请求。可用环境变量 `SHOW_SESSION_CREDITS` 覆盖 |
 | `credentialKeepAliveHours` | 否 | `72` | 账号保活间隔（小时）。账号保活**始终开启、没有开关**：后台定期刷新长期闲置的账号（含被禁用、备用优先级的账号），让 refreshToken 保持活跃，并把轮换后的新 refreshToken 写回账号文件。账号距上次刷新超过该时间才会被保活，低于 24 按 24 处理；账号之间随机错开 30~120 秒、每小时最多处理 5 个，失败不重试，已被服务端撤销的账号会跳过。**只能缓解因闲置导致的过期，无法延长服务端的绝对会话时限（如 IAM Identity Center 的 90 天）。** 可用环境变量 `CREDENTIAL_KEEP_ALIVE_HOURS` 覆盖 |
 | `debugLogs` | 否 | `false` | DEBUG 日志开关：`true` 时控制台、日志文件（`logFile`）与 Admin「查看日志」页三处同步输出 DEBUG 级别事件，可在 Admin 设置页热切换（无需重启）并写回 config.json；关闭后停止捕获新的 DEBUG，已捕获的记录保留。注意该开关返回/保存的是开关状态而非实际生效档位：设置 `RUST_LOG` 环境变量时，其指令仍优先（开关仅在 `RUST_LOG` 基础上追加全局 `debug` 指令，target 定向指令不受影响）。日志量会显著增加，排障后建议关闭。可用环境变量 `DEBUG_LOGS` 覆盖 |
 

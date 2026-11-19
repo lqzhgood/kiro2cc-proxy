@@ -82,6 +82,10 @@ export default {
           soft: 'var(--danger-soft)',
           line: 'var(--danger-line)',
         },
+        // 「启用」动作按钮的亮绿强调色（图标+文字同色：text-enable，无色块承载）
+        enable: {
+          DEFAULT: 'var(--enable)',
+        },
         track: 'var(--track)',
         'code-bg': 'var(--code-bg)',
         space: {
@@ -144,6 +148,11 @@ export default {
           from: { opacity: '1', transform: 'scale(1)' },
           to: { opacity: '0', transform: 'scale(0.95)' },
         },
+        // 对话页「生成中」三点加载动画，与 cc-model-switch 对话页 caret-dot 一致
+        'typing-dot': {
+          '0%, 60%, 100%': { opacity: '0.3', transform: 'translateY(0) scale(1)' },
+          '30%': { opacity: '1', transform: 'translateY(-5px) scale(1.15)' },
+        },
       },
       animation: {
         'overlay-in': 'overlay-in 200ms ease-out',
@@ -152,6 +161,7 @@ export default {
         'dialog-out': 'dialog-out 150ms ease-in forwards',
         'popover-in': 'popover-in 140ms ease-out',
         'popover-out': 'popover-out 100ms ease-in forwards',
+        'typing-dot': 'typing-dot 1.4s infinite',
       },
       fontFamily: {
         mono: ['"IBM Plex Mono"', '"JetBrains Mono"', 'Consolas', 'monospace'],

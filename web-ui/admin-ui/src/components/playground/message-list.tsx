@@ -15,7 +15,9 @@ import {
   RotateCw,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import { Pager } from '@/components/table-kit'
 import { copyToClipboard } from '@/lib/clipboard'
+import { formatMonthDayTime } from '@/lib/locale'
 import { toast } from '@/lib/toast'
 import { AttachmentView } from './attachment-view'
 import { estimateTokens } from './estimate-tokens'
@@ -24,6 +26,9 @@ import type { ChatMessage, WebSearchCall } from './types'
 
 /** 距底部小于该值视为「正在跟随最新消息」，新内容到达时自动滚到底 */
 const STICK_THRESHOLD_PX = 80
+
+/** 每页消息条数（用户与助手消息各算一条） */
+const MESSAGES_PER_PAGE = 100
 
 function formatSeconds(ms: number): string {
   return `${(ms / 1000).toFixed(1)}s`
@@ -192,7 +197,7 @@ function UsageStats({ usage, reasoning }: { usage: NonNullable<ChatMessage['usag
       </span>
       {thinkingTokens > 0 && (
         <span className="inline-flex shrink-0 items-center gap-0.5" title={thinkingTip} aria-label={thinkingTip}>
-          <Brain className="size-3" aria-hidden="true" />≈{n(thinkingTokens)} tokens
+          <Brain className="size-3" aria-hidden="true" />{n(thinkingTokens)} tokens
         </span>
       )}
       {usage.credits !== undefined && (
@@ -256,6 +261,9 @@ const MessageItem = memo(function MessageItem({ message, canRegenerate, onRegene
   // 搜索进行中时搜索块自带转圈，不再叠加跳动的圆点
   const searchPending = message.searches?.some((s) => s.status === 'searching') ?? false
   const waiting = streaming && message.content === '' && !message.reasoning && !searchPending
+  // 只认有效数字时间戳，避免 null / NaN 落到 1970 或 Invalid Date
+  const createdAt = message.createdAt
+  const hasCreatedAt = typeof createdAt === 'number' && Number.isFinite(createdAt)
 
   return (
     <div className="group py-2.5">
@@ -263,11 +271,11 @@ const MessageItem = memo(function MessageItem({ message, canRegenerate, onRegene
       {message.searches?.map((s) => <SearchBlock key={s.id} search={s} />)}
       {message.content !== '' && <Markdown text={message.content} />}
       {waiting && (
-        <div className="flex items-center gap-1 py-2" aria-label={t('playground.generating')}>
-          {[0, 150, 300].map((delay) => (
+        <div className="flex items-center gap-1.5 pb-4 pt-2" aria-label={t('playground.generating')}>
+          {[0, 200, 400].map((delay) => (
             <span
               key={delay}
-              className="size-1.5 animate-pulse rounded-full bg-ink-3"
+              className="size-[7px] animate-typing-dot rounded-full bg-ink-3"
               style={{ animationDelay: `${delay}ms` }}
             />
           ))}
@@ -294,8 +302,11 @@ const MessageItem = memo(function MessageItem({ message, canRegenerate, onRegene
               <RotateCw className="size-3.5" />
             </ActionButton>
           )}
-          {(message.model || message.usage) && (
+          {(message.model || message.usage || hasCreatedAt) && (
             <span className="ml-2 flex min-w-0 items-center gap-2.5 text-[11px] text-ink-3">
+              {hasCreatedAt && (
+                <span className="shrink-0 tabular-nums">{formatMonthDayTime(createdAt)}</span>
+              )}
               {message.model && <span className="truncate">{message.model}</span>}
               {message.usage && <UsageStats usage={message.usage} reasoning={message.reasoning} />}
             </span>
@@ -329,43 +340,81 @@ interface MessageListProps {
 }
 
 export function MessageList({ messages, isGenerating, hasKey, onRegenerate }: MessageListProps) {
+  const { t } = useTranslation()
   const containerRef = useRef<HTMLDivElement>(null)
   const stickRef = useRef(true)
   const prevLengthRef = useRef(messages.length)
+  const pageChangedRef = useRef(false)
+  // 用户手动选的页码。默认跟随最后一页；记下选页时的消息数，消息数变化（发送 / 重新生成）后失效，
+  // 回到最后一页，与「新消息自动回到底部」的行为一致
+  const [picked, setPicked] = useState<{ page: number; length: number } | null>(null)
+
+  const totalPages = Math.max(1, Math.ceil(messages.length / MESSAGES_PER_PAGE))
+  const page =
+    picked && picked.length === messages.length ? Math.min(Math.max(1, picked.page), totalPages) : totalPages
+  const isLastPage = page === totalPages
+  const pageMessages = messages.slice((page - 1) * MESSAGES_PER_PAGE, page * MESSAGES_PER_PAGE)
+
+  const updateStick = (el: HTMLDivElement) => {
+    stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < STICK_THRESHOLD_PX
+  }
 
   useLayoutEffect(() => {
     const el = containerRef.current
     if (!el) return
+    // 手动翻页：从新一页的顶部开始阅读
+    if (pageChangedRef.current) {
+      pageChangedRef.current = false
+      prevLengthRef.current = messages.length
+      el.scrollTop = 0
+      updateStick(el)
+      return
+    }
     // 新增消息（用户刚发送 / 重新生成）时无条件回到底部；流式追加只在用户没有上滚时跟随
     if (messages.length > prevLengthRef.current) stickRef.current = true
     prevLengthRef.current = messages.length
-    if (stickRef.current) el.scrollTop = el.scrollHeight
-  }, [messages])
+    if (isLastPage && stickRef.current) el.scrollTop = el.scrollHeight
+  }, [messages, page, isLastPage])
 
   const handleScroll = () => {
     const el = containerRef.current
-    if (!el) return
-    stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < STICK_THRESHOLD_PX
+    if (el) updateStick(el)
+  }
+
+  const handlePage = (next: number) => {
+    if (next === page) return
+    pageChangedRef.current = true
+    setPicked({ page: next, length: messages.length })
   }
 
   const lastAssistantId = [...messages].reverse().find((m) => m.role === 'assistant')?.id
 
   return (
-    <div ref={containerRef} onScroll={handleScroll} className="min-h-0 flex-1 overflow-y-auto">
-      <div className="mx-auto h-full w-full px-4 py-4 md:w-[95%] md:px-0">
-        {messages.length === 0 ? (
-          <EmptyState hasKey={hasKey} />
-        ) : (
-          messages.map((m) => (
-            <MessageItem
-              key={m.id}
-              message={m}
-              canRegenerate={!isGenerating && m.id === lastAssistantId}
-              onRegenerate={onRegenerate}
-            />
-          ))
-        )}
+    <>
+      <div ref={containerRef} onScroll={handleScroll} className="min-h-0 flex-1 overflow-y-auto">
+        <div className="mx-auto h-full w-full px-4 py-4 md:w-[95%] md:px-0">
+          {messages.length === 0 ? (
+            <EmptyState hasKey={hasKey} />
+          ) : (
+            pageMessages.map((m) => (
+              <MessageItem
+                key={m.id}
+                message={m}
+                canRegenerate={!isGenerating && m.id === lastAssistantId}
+                onRegenerate={onRegenerate}
+              />
+            ))
+          )}
+        </div>
       </div>
-    </div>
+      {totalPages > 1 && (
+        <div className="flex shrink-0 items-center justify-center gap-3 border-t-[0.5px] border-hairline px-4 py-1.5">
+          <span className="text-[11.5px] tabular-nums text-ink-3">
+            {t('common.pageInfoSimple', { current: page, total: totalPages })}
+          </span>
+          <Pager page={page} totalPages={totalPages} onPage={handlePage} />
+        </div>
+      )}
+    </>
   )
 }

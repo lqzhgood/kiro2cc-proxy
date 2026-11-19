@@ -37,7 +37,7 @@ export function ApiKeysPanel({ onViewDetail }: ApiKeysPanelProps) {
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
   const [editingKey, setEditingKey] = useState<ApiKeyItem | null>(null)
   const [newName, setNewName] = useState('')
-  const [newMode, setNewMode] = useState<'date' | 'quota'>('quota')
+  const [newMode, setNewMode] = useState<'date' | 'quota'>('date')
   const [newDuration, setNewDuration] = useState<number | null>(1) // 数值，null 表示永不过期
   const [newDurationUnit, setNewDurationUnit] = useState<'days' | 'hours'>('days')
   const [newSpendingLimit, setNewSpendingLimit] = useState(100)
@@ -196,7 +196,7 @@ export function ApiKeysPanel({ onViewDetail }: ApiKeysPanelProps) {
   const handleCreate = () => {
     createKey(
       {
-        name: newName,
+        name: newName.trim(),
         ...(newMode === 'date'
           ? newDuration !== null
             ? { durationDays: toDays(newDuration, newDurationUnit) }
@@ -209,7 +209,7 @@ export function ApiKeysPanel({ onViewDetail }: ApiKeysPanelProps) {
           toast.success(t('apiKeys.toastCreateSuccess'))
           setCreateDialogOpen(false)
           setNewName('')
-          setNewMode('quota')
+          setNewMode('date')
           setNewDuration(1)
           setNewDurationUnit('days')
           setNewSpendingLimit(100)
@@ -225,7 +225,7 @@ export function ApiKeysPanel({ onViewDetail }: ApiKeysPanelProps) {
   const handleUpdate = () => {
     if (!editingKey) return
     const duration = editDuration === '' ? null : editDuration
-    const data: Record<string, unknown> = { name: editName || undefined }
+    const data: Record<string, unknown> = { name: editName.trim() || undefined }
     if (editMode === 'date') {
       if (!editExpiryDirty) {
         // 用户未触碰有效期控件：不提交有效期字段，保留现有 durationDays/expiresAt
@@ -309,34 +309,11 @@ export function ApiKeysPanel({ onViewDetail }: ApiKeysPanelProps) {
     })
   }
 
-  // 将名称解析为数值（用于编号去重比较），非纯数字返回 null
-  const parseNameAsNumber = (name: string): number | null => {
-    const trimmed = name.trim()
-    if (!/^\d+$/.test(trimmed)) return null
-    return parseInt(trimmed, 10)
-  }
-
-  // 获取所有已存在的编号数值集合
-  const existingNumbers = new Set(
-    (apiKeys ?? []).map(k => parseNameAsNumber(k.name)).filter((n): n is number => n !== null)
-  )
-
-  // 生成不重复的随机 4 位编号
-  const generateUniqueSerial = (): string => {
-    for (let i = 0; i < 100; i++) {
-      const num = Math.floor(Math.random() * 9999) + 1 // 1-9999
-      if (!existingNumbers.has(num)) return String(num).padStart(4, '0')
-    }
-    // fallback: 找最大值 +1
-    const max = existingNumbers.size > 0 ? Math.max(...existingNumbers) : 0
-    return String(max + 1).padStart(4, '0')
-  }
-
-  // 检查当前输入的名称是否与已有编号冲突
+  // 检查当前输入的名称是否与已有名称冲突（首尾空格归一后精确比较）
   const nameConflict = (() => {
-    const num = parseNameAsNumber(newName)
-    if (num === null) return false
-    return existingNumbers.has(num)
+    const trimmed = newName.trim()
+    if (!trimmed) return false
+    return (apiKeys ?? []).some((k) => k.name.trim() === trimmed)
   })()
 
   // refetch() 不抛异常（TanStack Query 默认 throwOnError: false），故检查返回结果的 isError 而非 try/catch
@@ -678,7 +655,7 @@ export function ApiKeysPanel({ onViewDetail }: ApiKeysPanelProps) {
         )}
         <div className="ml-auto flex items-center gap-2">
           <Segmented value={sortBy} onChange={setSortBy} groupLabel={t('apiKeys.sortGroupLabel')} options={sortSegments} />
-          <Button onClick={() => { setNewName(generateUniqueSerial()); setCreateDialogOpen(true) }}>
+          <Button onClick={() => { setNewName(''); setCreateDialogOpen(true) }}>
             <Plus />
             {t('apiKeys.createButton')}
           </Button>

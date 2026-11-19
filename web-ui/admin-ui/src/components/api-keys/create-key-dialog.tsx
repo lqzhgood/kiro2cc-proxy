@@ -7,7 +7,6 @@ import { Input } from '@/components/ui/input'
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -95,18 +94,19 @@ export function CreateKeyDialog({
       <DialogContent>
         <DialogHeader>
           <DialogTitle>{t('apiKeys.createDialogTitle')}</DialogTitle>
-          <DialogDescription>{t('apiKeys.createDialogDesc')}</DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
           <div>
-            <label className="text-sm font-medium">{t('apiKeys.serialLabel')}</label>
+            <label className="text-sm font-medium">{t('apiKeys.nameLabel')}</label>
             <Input
-              placeholder={t('apiKeys.serialPlaceholder')}
+              className="mt-2"
+              maxLength={64}
+              placeholder={t('apiKeys.namePlaceholder')}
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
             />
             {nameConflict && (
-              <p className="text-xs text-destructive mt-1">{t('apiKeys.serialConflict')}</p>
+              <p className="text-xs text-destructive mt-1">{t('apiKeys.nameConflict')}</p>
             )}
           </div>
           <div>

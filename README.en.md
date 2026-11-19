@@ -14,7 +14,7 @@
 
 ### 📖 Quick Navigation
 
-[🚀 Quick Start](#-quick-start-new-users) ・ [🍎 macOS Deployment](#-local-deployment-macos) ・ [🪟 Windows Deployment](#-local-deployment-windows) ・ [🐧 Linux Deployment](#-server-deployment-linux) ・ [🔑 Get Accounts](#-getting-kiro-accounts) ・ [⚙️ Configuration](#️-configuration-reference) ・ [🤖 Claude Code Integration](#-claude-code-integration) ・ [🧬 Codex CLI / OpenAI SDK](#-codex-cli--openai-sdk-integration) ・ [🔌 API Endpoints](#-api-endpoints) ・ [🗺️ Model Mapping](#️-model-mapping) ・ [🛡️ Admin Panel](#️-admin-panel) ・ [❓ FAQ](#-faq) ・ [⚠️ Notes](#️-notes)
+[🚀 Quick Start](#-quick-start-new-users) ・ [📦 Prebuilt Package Deployment](#-prebuilt-package-deployment) ・ [🍎 macOS Deployment](#-local-deployment-macos) ・ [🪟 Windows Deployment](#-local-deployment-windows) ・ [🐧 Linux Deployment](#-server-deployment-linux) ・ [🔑 Get Accounts](#-getting-kiro-accounts) ・ [⚙️ Configuration](#️-configuration-reference) ・ [🤖 Claude Code Integration](#-claude-code-integration) ・ [🧬 Codex CLI / OpenAI SDK](#-codex-cli--openai-sdk-integration) ・ [🔌 API Endpoints](#-api-endpoints) ・ [🗺️ Model Mapping](#️-model-mapping) ・ [🛡️ Admin Panel](#️-admin-panel) ・ [❓ FAQ](#-faq) ・ [⚠️ Notes](#️-notes)
 
 ---
 
@@ -62,6 +62,91 @@ kiro2cc-proxy is a proxy service. It forwards standard Anthropic Claude API requ
 ```
 Install dependencies → Build project → Start service → Add accounts → Configure client
 ```
+
+> 💡 No Node.js / Rust toolchain? Download the [prebuilt package](#-prebuilt-package-deployment) and skip the first two steps.
+
+---
+
+## 📦 Prebuilt Package Deployment
+
+For **macOS (Apple Silicon / Intel)** and **Windows x64**. If you don't want to install the Node.js and Rust toolchains, download the archive for your platform from [Releases](https://github.com/TsinHzl/kiro2cc-proxy/releases/latest).
+
+> ⚠️ Each archive contains **only the `kiro2cc-proxy` executable**: the repository launch scripts (`run-local-service-mac.sh` / `run-local-service-windows.ps1`) and their setup wizard are not included, so create the config files manually as described below.
+
+### Step 1: Download the Archive for Your Platform
+
+| Platform | File |
+|---|---|
+| macOS Apple Silicon (M series) | `kiro2cc-proxy-vX.Y.Z-macOS-arm64.tar.gz` |
+| macOS Intel | `kiro2cc-proxy-vX.Y.Z-macOS-x64.tar.gz` |
+| Windows x64 | `kiro2cc-proxy-vX.Y.Z-Windows-x64.zip` |
+
+Run `uname -m` if unsure: `arm64` → Apple Silicon build, `x86_64` → Intel build.
+
+Verify integrity (optional): download `checksums-sha256.txt` from the same page, then
+
+```bash
+# macOS / Linux (macOS ships shasum, not sha256sum)
+shasum -a 256 -c checksums-sha256.txt
+```
+
+```powershell
+# Windows PowerShell
+Get-FileHash .\kiro2cc-proxy-vX.Y.Z-Windows-x64.zip -Algorithm SHA256
+```
+
+### Step 2: Extract and Make Executable
+
+```bash
+# macOS
+mkdir -p ~/kiro2cc && cd ~/kiro2cc
+tar -xzf ~/Downloads/kiro2cc-proxy-vX.Y.Z-macOS-arm64.tar.gz
+chmod +x kiro2cc-proxy
+xattr -d com.apple.quarantine kiro2cc-proxy 2>/dev/null   # unsigned binary: remove the quarantine flag or Gatekeeper may block it
+```
+
+Windows: extract the zip, then double-click `kiro2cc-proxy.exe` or run `.\kiro2cc-proxy.exe` in PowerShell.
+
+### Step 3: Create `config.json`
+
+The prebuilt package **does not generate config files on startup**. Without `config.json` the binary starts with built-in defaults: it listens on `127.0.0.1:8080` with an empty `adminPsw`, and **`/admin`, `/api/admin` and `/api/user` are not mounted at all — opening the admin panel returns 404**. Create the config first:
+
+```bash
+cat > config.json <<'EOF'
+{
+  "port": 8080,
+  "adminPsw": "replace-with-your-admin-password",
+  "proxyUrl": "http://127.0.0.1:7890"
+}
+EOF
+```
+
+- `proxyUrl` is your local proxy port (Clash / V2Ray, the port you use for tunneling). Users in mainland China cannot reach Claude models without it.
+- Config files and runtime state are read/written in the **current working directory**; to start from another directory, pass `--config <path> --credentials <path>`.
+- Environment variables can override instead (`PORT`, `ADMIN_PSW`, `PROXY_URL`, etc.) — see [Configuration Reference](#️-configuration-reference).
+
+### Step 4: Add Kiro Accounts
+
+- Option 1: start the service, open `http://127.0.0.1:8080/admin`, and use "KAM Import" to paste or drop the JSON exported by KAM.
+- Option 2: create `credentials.json` directly — see [credentials.json Format](#credentialsjson-format).
+
+### Step 5: Start and Connect Your Client
+
+```bash
+./kiro2cc-proxy           # macOS
+.\kiro2cc-proxy.exe       # Windows PowerShell
+```
+
+Runs in the foreground; stop with `Ctrl+C`. For client setup see [Claude Code Integration](#-claude-code-integration) and [Codex CLI / OpenAI SDK](#-codex-cli--openai-sdk-integration).
+
+### Differences vs. the Repository Scripts
+
+| Item | Repository scripts | Prebuilt package |
+|---|---|---|
+| Setup wizard | Yes, interactive on first start | No, write `config.json` by hand |
+| Config location | `app/config/` inside the repo | Current working directory |
+| Default port | 5678 | 8080 |
+| Prerequisites | Node.js + Rust (frontend and binary must be built first) | None, only the executable |
 
 ---
 
@@ -591,7 +676,7 @@ Lower `priority` value = higher priority. Up to 3 retries per account, 9 per req
 | `writeChunkingMaxLines` | No | `300` | Line limit of the chunked-writing instruction (see the `Reset(StreamId(1), INTERNAL_ERROR, Remote)` FAQ entry): when a request carries Write / Edit / MultiEdit, the system prompt asks for no more than ~N lines per tool call. Larger saves credits but makes the ~240s upstream stream reset more likely; `0` disables the instruction. Editable in the Admin settings page and hot-applied to subsequent requests. Override with `WRITE_CHUNKING_MAX_LINES` |
 | `thinkingAsText` | No | `true` | Thinking-as-text display for Claude Code only. `true` rewrites thinking blocks into text streamed line by line, similar to Kiro CLI: the terminal entrypoint `cli` uses ANSI dim italic (gray) styling, while other entrypoints such as Claude Desktop and `local-agent` use escape-free Markdown (a blockquote with italic lines) to approximate dimming and avoid `[2m` / `[0m` garbage. This avoids Claude Code appearing stalled while native thinking is folded. In both modes Claude Code's own context contains the thinking content, but it is dropped entirely when history is sent upstream: with the switch off, native thinking blocks are dropped; with it on, the marker line, thinking body and token-count line are dropped, so the upstream context never contains thinking (only when the stream is interrupted and the token-count line is missing does it conservatively fall back to stripping just the marker line). Override with `THINKING_AS_TEXT` |
 | `thinkingCollapse` | No | `true` | Collapse thinking when done (requires `thinkingAsText`; applies to the Claude Code terminal `cli` entrypoint and Claude Desktop, both verified; other entrypoints such as `local-agent` are unverified, so turn this off if thinking content is not visible). `true` keeps the line-by-line live preview, then when the thinking block ends the proxy emits a native thinking block on the same index. Claude Code clears the streaming text preview and lands it as a native collapsible thinking message (collapsed by default, Ctrl+O to expand; the expanded body ends with an "N tokens" line showing the thinking token count, the collapsed label is hardcoded by Claude Code and cannot show it), so the full thinking text no longer stays in the scrollback. Claude Desktop and similar entrypoints collapse into a native thinking block too, expanded through the client's own control. Can be overridden by the `THINKING_COLLAPSE` environment variable |
-| `showSessionCredits` | No | `false` | Session credits summary line (Claude Code only). `true` appends one line at the end of a reply once a conversation actually ends (`end_turn`; intermediate tool-call steps are skipped), e.g. `▸ Credits: turn 0.86 • session 8.73 \| Time: 12s`, matching Kiro CLI. `turn` is the credits spent in this turn (all requests under one prompt, including tool round-trips), `session` is the running total for the conversation since this was enabled, and `Time` is the turn duration. The upstream `meteringEvent` only reports per-request usage with no running total, so the proxy accumulates per request and resets on restart. Dimmed gray for the `cli` entrypoint, escape-free Markdown italics for other entrypoints. The line is stripped before history is sent upstream, so it never enters the upstream context or `output_tokens`; auxiliary requests without tool definitions (title generation, compaction, etc.) are skipped; non-streaming requests are not supported. Override with `SHOW_SESSION_CREDITS` |
+| `showSessionCredits` | No | `false` | Session credits summary line (all clients, including OpenAI-compatible callers such as Codex CLI). `true` appends one line at the end of a reply once a conversation actually ends (`end_turn`; intermediate tool-call steps are skipped), e.g. `▸ Credits: turn 0.86 • session 8.73 \| Time: 12s`, matching Kiro CLI. `turn` is the credits spent in this turn (all requests under one prompt, including tool round-trips), `session` is the running total for the conversation since this was enabled, and `Time` is the turn duration. The upstream `meteringEvent` only reports per-request usage with no running total, so the proxy accumulates per request and resets on restart. Dimmed gray for the Claude Code `cli` entrypoint, escape-free Markdown italics for other entrypoints and non-Claude Code clients. The line is stripped before history is sent upstream, so it never enters the upstream context or `output_tokens`; for Claude Code, auxiliary requests without tool definitions (title generation, compaction, etc.) are skipped; `json_schema` structured-output requests are skipped for every client; other clients get the line on streaming requests even without tools (so a streamed title-generation call would show it too); non-streaming requests are not supported. Override with `SHOW_SESSION_CREDITS` |
 | `credentialKeepAliveHours` | No | `72` | Account keep-alive interval in hours. Account keep-alive is **always on and has no switch**: a background task periodically refreshes long-idle accounts (including disabled and standby ones) to keep their refreshToken active, and writes the rotated refreshToken back to the credentials file. An account is only kept alive once it was last refreshed longer ago than this value; values below 24 are treated as 24. Accounts are spaced 30-120 seconds apart, at most 5 per hour; failures are not retried and accounts revoked by the server are skipped. **It only mitigates expiry caused by inactivity and cannot extend an absolute server-side session limit (such as IAM Identity Center's 90 days).** Overridable via env var `CREDENTIAL_KEEP_ALIVE_HOURS` |
 | `debugLogs` | No | `false` | DEBUG log switch: when `true`, DEBUG-level events are emitted to the console, the log file (`logFile`) and the Admin Log Viewer page in sync; hot-switchable from the Admin settings page (no restart) and persisted to config.json. Switching it off stops capturing new DEBUG entries while already captured ones are kept. Note the switch reports/saves its own state, not the effective level: when `RUST_LOG` is set its directives still take precedence (the switch only appends a global `debug` directive on top of `RUST_LOG`; target-specific directives are unaffected). Log volume grows significantly — turn it off after troubleshooting. Override with `DEBUG_LOGS` |
 
